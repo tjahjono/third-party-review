@@ -1,0 +1,68 @@
+{{ define "content" }}
+{{ $d := .Data }}
+<div class="row justify-content-center">
+  <div class="col-12 col-sm-10 col-md-7 col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+
+        {{ if $d.FirstRun }}
+          <h1 class="h4 mb-2">Set up TPSA Reviewer</h1>
+          <p class="text-secondary small">
+            No account exists yet. Create the first one &mdash; it has full access, and everyone
+            on the team shares the same level of access after that.
+          </p>
+          {{ if $d.Error }}<div class="alert alert-danger py-2 small">{{ $d.Error }}</div>{{ end }}
+
+          <form method="post" action="/setup" class="mt-3">
+            <div class="mb-3">
+              <label class="form-label" for="username">Username</label>
+              <input class="form-control" id="username" type="text" name="username" required autofocus
+                     autocomplete="username" value="{{ $d.Username }}" minlength="3" maxlength="64">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="display_name">Display name</label>
+              <input class="form-control" id="display_name" type="text" name="display_name"
+                     autocomplete="name" placeholder="Optional">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="password">Password</label>
+              <input class="form-control" id="password" type="password" name="password" required
+                     minlength="12" autocomplete="new-password">
+              <div class="form-text">
+                At least 12 characters. A short phrase of a few unrelated words is easier to
+                remember and harder to guess than a short complex string.
+              </div>
+            </div>
+            <div class="mb-4">
+              <label class="form-label" for="password_confirm">Confirm password</label>
+              <input class="form-control" id="password_confirm" type="password" name="password_confirm"
+                     required minlength="12" autocomplete="new-password">
+            </div>
+            <button class="btn btn-primary w-100" type="submit">Create account and sign in</button>
+          </form>
+
+        {{ else }}
+          <h1 class="h4 mb-3">Sign in</h1>
+          {{ if $d.Error }}<div class="alert alert-danger py-2 small">{{ $d.Error }}</div>{{ end }}
+
+          <form method="post" action="/login">
+            <input type="hidden" name="next" value="{{ $d.Next }}">
+            <div class="mb-3">
+              <label class="form-label" for="username">Username</label>
+              <input class="form-control" id="username" type="text" name="username" required autofocus
+                     autocomplete="username" value="{{ $d.Username }}">
+            </div>
+            <div class="mb-4">
+              <label class="form-label" for="password">Password</label>
+              <input class="form-control" id="password" type="password" name="password" required
+                     autocomplete="current-password">
+            </div>
+            <button class="btn btn-primary w-100" type="submit">Sign in</button>
+          </form>
+        {{ end }}
+
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

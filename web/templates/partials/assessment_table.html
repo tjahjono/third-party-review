@@ -1,0 +1,44 @@
+{{ define "assessment_table" }}
+<div id="assessment-table">
+  {{ if .Assessments }}
+  <div class="table-scroll">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr class="text-secondary small text-uppercase">
+          <th scope="col">Assessment</th>
+          <th scope="col">Vendor</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="text-end">Risk</th>
+          <th scope="col">Uploaded</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Assessments }}
+        <tr>
+          <td>
+            <a class="fw-semibold text-decoration-none" href="/assessments/{{ .ID }}">{{ .Title }}</a>
+            {{ if .SourceFilename }}<div class="text-secondary small">{{ .SourceFilename }}</div>{{ end }}
+          </td>
+          <td>{{ .VendorName }}</td>
+          <td><span class="{{ statusBadge .Status }}">{{ .Status.Label }}</span></td>
+          <td class="text-end">
+            {{ if .Summary }}
+              <span class="{{ bandClass .Summary.Band }}">{{ score .Summary.OverallScore }}</span>
+            {{ else }}
+              <span class="text-secondary">&mdash;</span>
+            {{ end }}
+          </td>
+          <td class="text-secondary small text-nowrap">{{ date .CreatedAt }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ else }}
+  <div class="text-center text-secondary py-5">
+    <p class="mb-1">No assessments match.</p>
+    <p class="small mb-0">Upload a completed vendor questionnaire to start a review.</p>
+  </div>
+  {{ end }}
+</div>
+{{ end }}

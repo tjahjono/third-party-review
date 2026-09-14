@@ -1,0 +1,48 @@
+{{ define "vendor_table" }}
+<div id="vendor-table">
+  {{ if .Vendors }}
+  <div class="table-scroll">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr class="text-secondary small text-uppercase">
+          <th scope="col">Vendor</th>
+          <th scope="col">Contact</th>
+          <th scope="col" class="text-end">Assessments</th>
+          <th scope="col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Vendors }}
+        <tr>
+          <td>
+            <div class="fw-semibold">{{ .Name }}</div>
+            {{ if .Notes }}<div class="text-secondary small">{{ truncate 120 .Notes }}</div>{{ end }}
+          </td>
+          <td>
+            {{ if .ContactName }}<div>{{ .ContactName }}</div>{{ end }}
+            {{ if .ContactEmail }}<div class="text-secondary small">{{ .ContactEmail }}</div>{{ end }}
+            {{ if and (not .ContactName) (not .ContactEmail) }}<span class="text-secondary">&mdash;</span>{{ end }}
+          </td>
+          <td class="text-end">{{ .AssessmentCount }}</td>
+          <td class="text-end text-nowrap">
+            <button class="btn btn-outline-danger btn-sm"
+                    hx-delete="/vendors/{{ .ID }}"
+                    hx-target="#vendor-table"
+                    hx-swap="outerHTML"
+                    hx-confirm="Delete {{ .Name }}? This also deletes {{ .AssessmentCount }} assessment(s) and all their review history.">
+              Delete
+            </button>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ else }}
+  <div class="text-center text-secondary py-5">
+    <p class="mb-1">No vendors yet.</p>
+    <p class="small mb-0">Add the third party you are assessing, then upload their completed questionnaire.</p>
+  </div>
+  {{ end }}
+</div>
+{{ end }}

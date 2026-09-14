@@ -1,0 +1,51 @@
+{{ define "signoff_panel" }}
+{{ $p := .Progress }}
+<div id="signoff-panel"
+     hx-get="/assessments/{{ .Assessment.ID }}/signoff"
+     hx-trigger="signOffChanged from:body"
+     hx-target="#signoff-panel"
+     hx-swap="outerHTML">
+  {{ if gt $p.Total 0 }}
+  <div class="d-flex justify-content-between small mb-1">
+    <span class="fw-semibold">Human sign-off</span>
+    <span class="text-secondary">{{ $p.Finalized }} of {{ $p.Total }} signed</span>
+  </div>
+  <div class="progress mb-3" role="progressbar" aria-label="Sign-off progress"
+       aria-valuenow="{{ $p.Percent }}" aria-valuemin="0" aria-valuemax="100" style="height: .5rem;">
+    <div class="progress-bar {{ if $p.ReadyToClose }}bg-success{{ end }}"
+         style="width: {{ $p.Percent }}%"></div>
+  </div>
+
+  <div class="d-flex flex-wrap align-items-center gap-2">
+    {{ if .Closed }}
+      <span class="badge text-bg-secondary">Closed &mdash; this is the signed record</span>
+      <button class="btn btn-outline-secondary btn-sm"
+              hx-post="/assessments/{{ .Assessment.ID }}/reopen"
+              hx-confirm="Reopen this assessment so its feedback can be changed again?">Reopen</button>
+    {{ else }}
+      {{ if gt $p.Pending 0 }}
+        <button class="btn btn-outline-primary btn-sm"
+                hx-post="/assessments/{{ .Assessment.ID }}/finalize-all"
+                hx-target="#question-list"
+                hx-swap="outerHTML"
+                hx-confirm="Accept the AI draft as written for all {{ $p.Pending }} remaining question(s)? You can still reopen any of them afterwards.">
+          Accept all remaining drafts
+        </button>
+        {{ if gt $p.NoDraft 0 }}
+        <span class="text-secondary small">
+          {{ $p.NoDraft }} question(s) have no AI draft and need feedback written by hand.
+        </span>
+        {{ end }}
+      {{ else }}
+        <button class="btn btn-primary btn-sm"
+                hx-post="/assessments/{{ .Assessment.ID }}/close"
+                hx-confirm="Close this assessment? It becomes the signed record and its feedback can't be changed until it is reopened.">
+          Close assessment
+        </button>
+        <span class="text-secondary small">Every question is signed off.</span>
+      {{ end }}
+    {{ end }}
+  </div>
+  {{ end }}
+</div>
+{{ end }}

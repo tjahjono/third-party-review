@@ -1,0 +1,84 @@
+{{ define "summary_panel" }}
+{{ with .Summary }}
+<div class="card mb-4" id="summary-panel"
+     hx-get="/assessments/{{ .AssessmentID }}/summary"
+     hx-trigger="signOffChanged from:body"
+     hx-target="#summary-panel"
+     hx-swap="outerHTML">
+  <div class="card-body">
+
+    <div class="row align-items-center g-4 mb-4">
+      <div class="col-12 col-md-auto">
+        <div class="d-flex align-items-center gap-3">
+          <div class="score-value {{ bandColor .Band }}">{{ score .OverallScore }}</div>
+          <div>
+            <div class="fw-semibold">{{ .Band.Label }} residual risk</div>
+            <div class="text-secondary small">
+              weighted worst-case across {{ .ScoredCount }} scored answer(s)
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-md">
+        <div class="row row-cols-2 row-cols-lg-4 g-3 text-center text-md-start">
+          <div class="col">
+            <div class="text-secondary text-uppercase" style="font-size:.72rem;letter-spacing:.05em;">Flagged</div>
+            <div class="fs-5 fw-semibold">{{ .FlaggedCount }}</div>
+          </div>
+          <div class="col">
+            <div class="text-secondary text-uppercase" style="font-size:.72rem;letter-spacing:.05em;">Missing / incomplete</div>
+            <div class="fs-5 fw-semibold">{{ .IncompleteCount }}</div>
+          </div>
+          <div class="col">
+            <div class="text-secondary text-uppercase" style="font-size:.72rem;letter-spacing:.05em;">Awaiting sign-off</div>
+            <div class="fs-5 fw-semibold">{{ .PendingFinalization }}</div>
+          </div>
+          <div class="col">
+            <div class="text-secondary text-uppercase" style="font-size:.72rem;letter-spacing:.05em;">Finalized</div>
+            <div class="fs-5 fw-semibold">{{ .FinalizedCount }} / {{ .QuestionCount }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {{ if .DomainScores }}
+    <div class="table-scroll mb-3">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr class="text-secondary small text-uppercase">
+            <th scope="col">Domain</th>
+            <th scope="col" class="text-end">Risk</th>
+            <th scope="col" class="text-end">Questions</th>
+            <th scope="col" class="text-end">Flagged</th>
+            <th scope="col" class="text-end">Incomplete</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .DomainScores }}
+          <tr>
+            <td>{{ .DomainName }}</td>
+            <td class="text-end"><span class="{{ bandClass .Band }}">{{ score .WeightedScore }}</span></td>
+            <td class="text-end">{{ .QuestionCount }}</td>
+            <td class="text-end">{{ .FlaggedCount }}</td>
+            <td class="text-end">{{ .IncompleteCount }}</td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+    {{ end }}
+
+    {{ if .Narrative }}
+    <div>
+      <h3 class="h6">
+        Assessor summary
+        <span class="text-secondary fw-normal small">&mdash; AI draft, not yet signed off</span>
+      </h3>
+      {{ paragraphs .Narrative }}
+    </div>
+    {{ end }}
+
+  </div>
+</div>
+{{ end }}
+{{ end }}

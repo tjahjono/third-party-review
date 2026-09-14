@@ -1,0 +1,253 @@
+// TPSA Reviewer theme.
+//
+// Bootstrap is compiled from source with the brand colour substituted, rather
+// than shipped stock and overridden at runtime. Overriding only `--bs-primary`
+// does not retheme buttons: Bootstrap 5.3 compiles literal values into
+// `.btn-primary { --bs-btn-bg: ... }` and into every derived tint, shade,
+// focus ring and subtle background. Compiling from Sass gets all of those
+// consistently in one pass.
+//
+// The compiled output is committed, so nobody needs a build step to run the
+// app. `make css` regenerates it after a change here.
+
+// ---------------------------------------------------------------------------
+// Brand
+// ---------------------------------------------------------------------------
+
+// OCBC red. Sourced from OCBC's own site assets; logotyp.us lists a marginally
+// warmer #ee2722 for the mark. Change this one line to adjust the brand colour
+// everywhere, then run `make css`.
+$ocbc-red:        #e1261b;
+$ocbc-red-dark:   #b71d14;
+$ocbc-slate:      #495a63;
+
+$primary:         $ocbc-red;
+$secondary:       $ocbc-slate;
+
+// Risk bands are deliberately NOT Bootstrap's semantic colours.
+//
+// In a risk tool whose brand colour is red, a "Critical" badge in brand red
+// would be indistinguishable from a primary button, and the most important
+// signal on the page would read as decoration. The band scale therefore runs
+// green -> amber -> orange -> deep maroon, where critical is darker and more
+// saturated than the brand red so it still reads as "worse" beside it.
+$risk-low:        #1e7b45;
+$risk-medium:     #b26a00;
+$risk-high:       #c2410c;
+$risk-critical:   #7f1210;
+
+$success:         $risk-low;
+// Lighter than $risk-medium on purpose. Bootstrap picks badge text colour by
+// contrast: a dark amber yields white-on-amber, which lands around 4.0:1 and
+// is uncomfortable at badge size. A lighter amber gets dark text and a clean
+// pass. The risk band keeps the darker tone, where it is text on a pale tint.
+$warning:         #f0a92a;
+// Kept a shade deeper than the brand red so a destructive action is not
+// mistaken for the primary one.
+$danger:          #a4161a;
+$info:            #1d69fe; // OCBC's secondary blue
+
+// ---------------------------------------------------------------------------
+// Typography and shape
+// ---------------------------------------------------------------------------
+
+$font-family-sans-serif: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
+  "Segoe UI Emoji";
+
+$font-size-base:          0.95rem;
+$body-color:              #1c2530;
+$body-bg:                 #f5f6f8;
+$border-color:            #dfe3e8;
+
+$border-radius:           0.375rem;
+$border-radius-sm:        0.25rem;
+$border-radius-lg:        0.5rem;
+
+$enable-shadows:          false;
+$enable-gradients:        false;
+// Respected via prefers-reduced-motion by Bootstrap itself.
+$enable-transitions:      true;
+
+$link-color:              $ocbc-red-dark;
+$link-hover-color:        $ocbc-red;
+
+$table-border-color:      $border-color;
+$card-border-color:       $border-color;
+$input-border-color:      #ced4da;
+
+$navbar-padding-y:        0.6rem;
+
+// ---------------------------------------------------------------------------
+// Bootstrap
+// ---------------------------------------------------------------------------
+// Imported selectively: the components this application actually uses. Modal,
+// carousel, offcanvas, popover and tooltip are omitted, which keeps the
+// stylesheet roughly a third smaller than the full build.
+
+@import "bootstrap/scss/functions";
+@import "bootstrap/scss/variables";
+@import "bootstrap/scss/variables-dark";
+@import "bootstrap/scss/maps";
+@import "bootstrap/scss/mixins";
+@import "bootstrap/scss/utilities";
+
+@import "bootstrap/scss/root";
+@import "bootstrap/scss/reboot";
+@import "bootstrap/scss/type";
+@import "bootstrap/scss/images";
+@import "bootstrap/scss/containers";
+@import "bootstrap/scss/grid";
+@import "bootstrap/scss/tables";
+@import "bootstrap/scss/forms";
+@import "bootstrap/scss/buttons";
+@import "bootstrap/scss/transitions";
+@import "bootstrap/scss/dropdown";
+@import "bootstrap/scss/button-group";
+@import "bootstrap/scss/nav";
+@import "bootstrap/scss/navbar";
+@import "bootstrap/scss/card";
+@import "bootstrap/scss/accordion";
+@import "bootstrap/scss/badge";
+@import "bootstrap/scss/alert";
+@import "bootstrap/scss/progress";
+@import "bootstrap/scss/list-group";
+@import "bootstrap/scss/close";
+@import "bootstrap/scss/spinners";
+@import "bootstrap/scss/helpers";
+@import "bootstrap/scss/utilities/api";
+
+// ---------------------------------------------------------------------------
+// Application layer
+// ---------------------------------------------------------------------------
+
+// Risk bands, exposed as custom properties so the markup only ever names a
+// band and never a colour.
+:root {
+  --risk-low:        #{$risk-low};
+  --risk-medium:     #{$risk-medium};
+  --risk-high:       #{$risk-high};
+  --risk-critical:   #{$risk-critical};
+  --risk-low-bg:     #{tint-color($risk-low, 88%)};
+  --risk-medium-bg:  #{tint-color($risk-medium, 88%)};
+  --risk-high-bg:    #{tint-color($risk-high, 88%)};
+  --risk-critical-bg:#{tint-color($risk-critical, 90%)};
+  --brand-red:       #{$ocbc-red};
+  --brand-slate:     #{$ocbc-slate};
+}
+
+.band-low      { color: var(--risk-low);      background-color: var(--risk-low-bg); }
+.band-medium   { color: var(--risk-medium);   background-color: var(--risk-medium-bg); }
+.band-high     { color: var(--risk-high);     background-color: var(--risk-high-bg); }
+.band-critical { color: #fff;                 background-color: var(--risk-critical); }
+.band-unknown  { color: $gray-600;            background-color: $gray-200; }
+
+// The score headline on the summary panel.
+.score-value {
+  font-size: 2.25rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.5rem 0.85rem;
+  border-radius: $border-radius;
+}
+
+// Brand bar.
+//
+// Bootstrap's navbar-dark sets inactive links to rgba(255,255,255,.55). Against
+// the brand red that is roughly 2.6:1 - legible as decoration, not as a
+// navigation control. Raised so every link clears AA.
+.navbar-dark {
+  --bs-navbar-color: rgba(255, 255, 255, 0.88);
+  --bs-navbar-hover-color: #fff;
+  --bs-navbar-active-color: #fff;
+}
+
+.navbar-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: #fff;
+  color: $ocbc-red;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+// Question cards.
+.question-card .card-header { background-color: $gray-100; }
+
+.field-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: $gray-600;
+  margin-bottom: 0.15rem;
+}
+.field-value { white-space: pre-wrap; }
+.empty-value { color: $danger; font-style: italic; }
+
+// The AI draft and the signed-off text are colour-coded so a reviewer can tell
+// at a glance which they are looking at.
+.draft-block {
+  padding: 0.6rem 0.75rem;
+  // The darker amber reads as a definite edge; the light badge amber does not.
+  border-left: 3px solid $risk-medium;
+  background-color: tint-color($warning, 82%);
+  border-radius: 0 $border-radius $border-radius 0;
+}
+.final-block {
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid $success;
+  background-color: tint-color($success, 90%);
+  border-radius: 0 $border-radius $border-radius 0;
+}
+
+// A signed-off card flashes briefly so a reviewer working down a long list can
+// see which one they just handled.
+.just-saved { animation: saved-flash 1.4s ease-out; }
+@keyframes saved-flash {
+  0%   { box-shadow: 0 0 0 3px rgba($success, 0.5); }
+  100% { box-shadow: 0 0 0 3px rgba($success, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .just-saved { animation: none; }
+}
+
+.mono { font-family: $font-family-monospace; font-size: 0.85em; }
+
+.code-input {
+  font-family: $font-family-monospace;
+  font-size: 1.3rem;
+  letter-spacing: 0.2em;
+  text-align: center;
+}
+
+.qr-frame {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid $border-color;
+  border-radius: $border-radius;
+}
+.qr-frame svg { max-width: 220px; height: auto; }
+
+.table-scroll { overflow-x: auto; }
+.table-scroll-tall { max-height: 32rem; overflow-y: auto; }
+
+.row-divider td { background-color: $gray-200; font-weight: 600; }
+
+// Sticky action bar on the long mapping screen.
+.sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: #fff;
+  border: 1px solid $border-color;
+  border-radius: $border-radius;
+  box-shadow: 0 -2px 8px rgba(16, 24, 40, 0.08);
+}

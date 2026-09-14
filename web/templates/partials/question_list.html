@@ -1,0 +1,24 @@
+{{ define "question_list" }}
+<div id="question-list">
+  {{ if .BulkResult }}
+  <div class="alert alert-success">
+    Signed off {{ .BulkResult.Finalized }} question(s) using the AI draft as written.
+    {{ if gt .BulkResult.Skipped 0 }}
+      {{ .BulkResult.Skipped }} were skipped because they have no draft &mdash; write those by hand.
+    {{ end }}
+  </div>
+  {{ end }}
+
+  {{ if .Questions }}
+    {{ $closed := .Closed }}
+    {{ range .Questions }}
+      {{ template "question_card" (dict "Question" . "Editing" false "Saved" false "Closed" $closed) }}
+    {{ end }}
+  {{ else }}
+    <div class="text-center text-secondary py-5">
+      <p class="mb-1">No questions match these filters.</p>
+      <p class="small mb-0">Clear a filter to see the rest of the assessment.</p>
+    </div>
+  {{ end }}
+</div>
+{{ end }}

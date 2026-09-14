@@ -1,0 +1,40 @@
+{{ define "content" }}
+{{ $d := .Data }}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Assessments</h1>
+    <p class="text-secondary mb-0">{{ $d.Total }} assessment(s)</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="row g-2 mb-3">
+      <div class="col-12 col-sm-7 col-md-5">
+        <input class="form-control" type="search" name="q" placeholder="Search by title or vendor..."
+               value="{{ $d.Search }}"
+               hx-get="/assessments?partial=1"
+               hx-include="[name='status']"
+               hx-trigger="input changed delay:300ms, search"
+               hx-target="#assessment-table"
+               hx-swap="outerHTML">
+      </div>
+      <div class="col-12 col-sm-5 col-md-3">
+        <select class="form-select" name="status"
+                hx-get="/assessments?partial=1"
+                hx-include="[name='q']"
+                hx-target="#assessment-table"
+                hx-swap="outerHTML">
+          <option value="">All statuses</option>
+          <option value="uploaded"  {{ if eq $d.Status "uploaded"  }}selected{{ end }}>Uploaded</option>
+          <option value="mapped"    {{ if eq $d.Status "mapped"    }}selected{{ end }}>Mapped</option>
+          <option value="reviewing" {{ if eq $d.Status "reviewing" }}selected{{ end }}>AI review running</option>
+          <option value="reviewed"  {{ if eq $d.Status "reviewed"  }}selected{{ end }}>Reviewed</option>
+          <option value="closed"    {{ if eq $d.Status "closed"    }}selected{{ end }}>Closed</option>
+        </select>
+      </div>
+    </div>
+    {{ template "assessment_table" $d }}
+  </div>
+</div>
+{{ end }}

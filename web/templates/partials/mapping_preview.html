@@ -1,0 +1,151 @@
+{{ define "mapping_preview" }}
+<div id="mapping-preview">
+  {{ with .Preview }}
+
+  {{ if .Blocker }}
+  <div class="alert alert-danger">
+    <strong class="d-block">{{ .Blocker }}</strong>
+    <div class="small mt-1">
+      Set the correct column in the &ldquo;Maps to&rdquo; dropdowns below, then continue.
+    </div>
+  </div>
+  {{ end }}
+
+  {{ if .Warnings }}
+  <div class="alert alert-warning">
+    <strong class="d-block">Check these before continuing</strong>
+    <ul class="mb-0 mt-2 small ps-3">
+      {{ range .Warnings }}<li>{{ . }}</li>{{ end }}
+    </ul>
+  </div>
+  {{ end }}
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <h2 class="h5 card-title">Column mapping</h2>
+      <p class="text-secondary small">
+        Best guesses are pre-filled from the standard template. Correct anything wrong and leave
+        extra columns unmapped.
+      </p>
+      <div class="table-scroll">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr class="text-secondary small text-uppercase">
+              <th scope="col">Column</th>
+              <th scope="col">Header in your file</th>
+              <th scope="col" style="min-width: 15rem;">Maps to</th>
+              <th scope="col" class="text-end">Match</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .Candidates }}
+            <tr>
+              <td class="mono">{{ columnLetter .Index }}</td>
+              <td>{{ if .Header }}{{ .Header }}{{ else }}<span class="text-secondary">(blank)</span>{{ end }}</td>
+              <td>
+                <select class="form-select form-select-sm" name="col_{{ .Index }}"
+                        hx-post="/assessments/{{ $.Assessment.ID }}/mapping/preview"
+                        hx-include="#mapping-form"
+                        hx-target="#mapping-preview"
+                        hx-swap="outerHTML">
+                  <option value="">&mdash; ignore this column &mdash;</option>
+                  {{ $suggested := .Suggested }}
+                  {{ range templateFields }}
+                  <option value="{{ .Field }}" {{ if eq $suggested .Field }}selected{{ end }}>
+                    {{ .Label }}{{ if .Required }} (required){{ end }}
+                  </option>
+                  {{ end }}
+                </select>
+              </td>
+              <td class="text-end">
+                {{ if .Suggested }}
+                  {{ if ge .Confidence 0.9 }}<span class="badge band-low">{{ pct .Confidence }}</span>
+                  {{ else if gt .Confidence 0.0 }}<span class="badge band-medium">{{ pct .Confidence }}</span>
+                  {{ else }}<span class="badge band-high">guess</span>{{ end }}
+                {{ else }}<span class="text-secondary">&mdash;</span>{{ end }}
+              </td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <h2 class="h5 card-title">Detected domain sections</h2>
+      <p class="text-secondary small">
+        {{ len .Sections }} section(s) and {{ .QuestionCount }} question(s) detected.
+        Every question must belong to exactly one domain &mdash; reassign any row the detector placed wrongly.
+      </p>
+      <div class="d-flex flex-wrap gap-2">
+        {{ range .Sections }}
+        <div class="border rounded px-3 py-2 small d-flex align-items-center gap-2
+                    {{ if .Inferred }}border-warning bg-warning-subtle{{ else }}bg-light{{ end }}">
+          <span class="fw-semibold">{{ .DomainName }}</span>
+          <span class="text-secondary">{{ .RowCount }} question(s)</span>
+          {{ if .Inferred }}<span class="badge text-bg-warning">inferred</span>{{ end }}
+        </div>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <h2 class="h5 card-title">Row preview</h2>
+      {{ if $.Truncated }}
+      <p class="text-secondary small">
+        Showing the first {{ len $.PreviewRows }} of {{ $.TotalRows }} rows. All rows are ingested.
+      </p>
+      {{ end }}
+      <div class="table-scroll table-scroll-tall">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="sticky-top bg-white">
+            <tr class="text-secondary small text-uppercase">
+              <th scope="col" class="text-end">Row</th>
+              <th scope="col">Question</th>
+              <th scope="col">Answer</th>
+              <th scope="col" style="min-width: 13rem;">Domain</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range $.PreviewRows }}
+              {{ if isDividerRow .Kind }}
+              <tr class="row-divider">
+                <td class="text-end mono">{{ add .Index 1 }}</td>
+                <td colspan="3">
+                  {{ .DividerText }}
+                  <span class="text-secondary small fw-normal">
+                    &rarr; {{ .DomainName }} ({{ pct .DividerScore }} match)
+                  </span>
+                </td>
+              </tr>
+              {{ else if isQuestionRow .Kind }}
+              <tr>
+                <td class="text-end mono">{{ add .Index 1 }}</td>
+                <td>{{ truncate 160 .QuestionText }}</td>
+                <td class="text-secondary">
+                  {{ if .Answer }}{{ truncate 120 .Answer }}{{ else }}<em>no answer</em>{{ end }}
+                </td>
+                <td>
+                  <select class="form-select form-select-sm" name="row_{{ .Index }}">
+                    {{ $current := .DomainID }}
+                    {{ range $.Domains }}
+                    <option value="{{ .ID }}" {{ if eq $current .ID }}selected{{ end }}>{{ .Name }}</option>
+                    {{ end }}
+                  </select>
+                </td>
+              </tr>
+              {{ end }}
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {{ end }}
+</div>
+{{ end }}

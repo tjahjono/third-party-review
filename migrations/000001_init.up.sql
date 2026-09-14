@@ -1,0 +1,220 @@
+-- Core schema for the TPSA Reviewer.
+-- Single-tenant by design: there is no org/workspace column anywhere.
+
+-- ---------------------------------------------------------------------------
+-- Auth. One internal team, one role. MFA columns exist from the first
+-- migration so TOTP enrolment can be switched on later without a schema change.
+-- ---------------------------------------------------------------------------
+CREATE TABLE users (
+    id                  BIGSERIAL PRIMARY KEY,
+    username            TEXT        NOT NULL,
+    display_name        TEXT        NOT NULL DEFAULT '',
+    password_hash       TEXT        NOT NULL,
+    mfa_enabled         BOOLEAN     NOT NULL DEFAULT FALSE,
+    mfa_secret          TEXT        NOT NULL DEFAULT '',
+    mfa_enrolled_at     TIMESTAMPTZ,
+    mfa_recovery_codes  TEXT[]      NOT NULL DEFAULT '{}',
+    last_login_at       TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX users_username_key ON users (lower(username));
+
+CREATE TABLE sessions (
+    id           TEXT        PRIMARY KEY,
+    user_id      BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mfa_pending  BOOLEAN     NOT NULL DEFAULT FALSE,
+    user_agent   TEXT        NOT NULL DEFAULT '',
+    ip           TEXT        NOT NULL DEFAULT '',
+    expires_at   TIMESTAMPTZ NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX sessions_user_id_idx    ON sessions (user_id);
+CREATE INDEX sessions_expires_at_idx ON sessions (expires_at);
+
+-- ---------------------------------------------------------------------------
+-- Lookup: TPSA assessment domains. Seeded, not a hardcoded enum, so new
+-- domains can be added at runtime.
+-- ---------------------------------------------------------------------------
+CREATE TABLE assessment_domains (
+    id            BIGSERIAL PRIMARY KEY,
+    name          TEXT        NOT NULL,
+    slug          TEXT        NOT NULL,
+    sort_order    INTEGER     NOT NULL DEFAULT 0,
+    scrutiny_note TEXT        NOT NULL DEFAULT '',
+    active        BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX assessment_domains_slug_key ON assessment_domains (slug);
+CREATE INDEX assessment_domains_sort_idx        ON assessment_domains (sort_order);
+
+-- ---------------------------------------------------------------------------
+-- Vendors and assessments.
+-- ---------------------------------------------------------------------------
+CREATE TABLE vendors (
+    id            BIGSERIAL PRIMARY KEY,
+    name          TEXT        NOT NULL,
+    contact_name  TEXT        NOT NULL DEFAULT '',
+    contact_email TEXT        NOT NULL DEFAULT '',
+    notes         TEXT        NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX vendors_name_key ON vendors (lower(name));
+
+CREATE TABLE assessments (
+    id              BIGSERIAL PRIMARY KEY,
+    vendor_id       BIGINT      NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+    title           TEXT        NOT NULL,
+    status          TEXT        NOT NULL DEFAULT 'uploaded'
+                    CHECK (status IN ('uploaded','mapped','reviewing','reviewed','closed')),
+    source_filename TEXT        NOT NULL DEFAULT '',
+    source_size     BIGINT      NOT NULL DEFAULT 0,
+    source_sha256   TEXT        NOT NULL DEFAULT '',
+    column_mapping  JSONB,
+    current_run_id  BIGINT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    mapped_at       TIMESTAMPTZ,
+    reviewed_at     TIMESTAMPTZ,
+    closed_at       TIMESTAMPTZ
+);
+CREATE INDEX assessments_vendor_id_idx  ON assessments (vendor_id);
+CREATE INDEX assessments_status_idx     ON assessments (status);
+CREATE INDEX assessments_created_at_idx ON assessments (created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Questions. Every row belongs to exactly one domain (NOT NULL FK).
+-- ---------------------------------------------------------------------------
+CREATE TABLE questions (
+    id                      BIGSERIAL PRIMARY KEY,
+    assessment_id           BIGINT  NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
+    domain_id               BIGINT  NOT NULL REFERENCES assessment_domains(id) ON DELETE RESTRICT,
+    source_row              INTEGER NOT NULL DEFAULT 0,
+    position                INTEGER NOT NULL DEFAULT 0,
+    question_text           TEXT    NOT NULL,
+    assessor_remark         TEXT    NOT NULL DEFAULT '',
+    third_party_answer      TEXT    NOT NULL DEFAULT '',
+    third_party_remark      TEXT    NOT NULL DEFAULT '',
+    third_party_feedback    TEXT    NOT NULL DEFAULT '',
+    link_evidence           TEXT    NOT NULL DEFAULT '',
+    assessor_feedback_draft TEXT,
+    assessor_feedback_final TEXT,
+    review_status           TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK (review_status IN ('pending','ai_drafted','finalized')),
+    finalized_at            TIMESTAMPTZ,
+    finalized_by            BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX questions_assessment_idx        ON questions (assessment_id, position);
+CREATE INDEX questions_domain_idx            ON questions (domain_id);
+CREATE INDEX questions_review_status_idx     ON questions (assessment_id, review_status);
+
+-- ---------------------------------------------------------------------------
+-- Rubrics.
+-- ---------------------------------------------------------------------------
+CREATE TABLE rubrics (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT        NOT NULL,
+    content    TEXT        NOT NULL,
+    reusable   BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE assessment_rubrics (
+    assessment_id BIGINT PRIMARY KEY REFERENCES assessments(id) ON DELETE CASCADE,
+    rubric_id     BIGINT NOT NULL REFERENCES rubrics(id) ON DELETE CASCADE,
+    attached_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX assessment_rubrics_rubric_idx ON assessment_rubrics (rubric_id);
+
+-- ---------------------------------------------------------------------------
+-- Background review runs.
+-- ---------------------------------------------------------------------------
+CREATE TABLE review_jobs (
+    id               BIGSERIAL PRIMARY KEY,
+    assessment_id    BIGINT  NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
+    status           TEXT    NOT NULL DEFAULT 'queued'
+                     CHECK (status IN ('queued','running','succeeded','failed','cancelled')),
+    total_questions  INTEGER NOT NULL DEFAULT 0,
+    done_questions   INTEGER NOT NULL DEFAULT 0,
+    failed_questions INTEGER NOT NULL DEFAULT 0,
+    stage            TEXT    NOT NULL DEFAULT '',
+    provider         TEXT    NOT NULL DEFAULT '',
+    model            TEXT    NOT NULL DEFAULT '',
+    rubric_id        BIGINT REFERENCES rubrics(id) ON DELETE SET NULL,
+    error            TEXT    NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at       TIMESTAMPTZ,
+    finished_at      TIMESTAMPTZ,
+    heartbeat_at     TIMESTAMPTZ
+);
+CREATE INDEX review_jobs_assessment_idx ON review_jobs (assessment_id, created_at DESC);
+CREATE INDEX review_jobs_queue_idx      ON review_jobs (status, created_at)
+    WHERE status IN ('queued','running');
+
+ALTER TABLE assessments
+    ADD CONSTRAINT assessments_current_run_fk
+    FOREIGN KEY (current_run_id) REFERENCES review_jobs(id) ON DELETE SET NULL;
+
+-- ---------------------------------------------------------------------------
+-- Per-question AI results. Child rows keyed by run so a re-review never
+-- destroys what an earlier run said.
+-- ---------------------------------------------------------------------------
+CREATE TABLE review_results (
+    id             BIGSERIAL PRIMARY KEY,
+    question_id    BIGINT  NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+    run_id         BIGINT  NOT NULL REFERENCES review_jobs(id) ON DELETE CASCADE,
+    risk_score     SMALLINT NOT NULL DEFAULT 0 CHECK (risk_score BETWEEN 0 AND 5),
+    completeness   TEXT    NOT NULL DEFAULT 'unknown'
+                   CHECK (completeness IN ('complete','partial','missing','non_responsive','unknown')),
+    flags          JSONB   NOT NULL DEFAULT '[]'::jsonb,
+    rationale      TEXT    NOT NULL DEFAULT '',
+    feedback_draft TEXT    NOT NULL DEFAULT '',
+    confidence     DOUBLE PRECISION NOT NULL DEFAULT 0,
+    provider       TEXT    NOT NULL DEFAULT '',
+    model          TEXT    NOT NULL DEFAULT '',
+    raw            TEXT    NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX review_results_question_run_key ON review_results (question_id, run_id);
+CREATE INDEX review_results_run_idx                 ON review_results (run_id);
+CREATE INDEX review_results_question_created_idx    ON review_results (question_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Assessment-level aggregates. Recomputed in Go after each run.
+-- ---------------------------------------------------------------------------
+CREATE TABLE assessment_summaries (
+    assessment_id        BIGINT PRIMARY KEY REFERENCES assessments(id) ON DELETE CASCADE,
+    run_id               BIGINT REFERENCES review_jobs(id) ON DELETE SET NULL,
+    question_count       INTEGER NOT NULL DEFAULT 0,
+    scored_count         INTEGER NOT NULL DEFAULT 0,
+    overall_score        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mean_score           DOUBLE PRECISION NOT NULL DEFAULT 0,
+    worst_score          SMALLINT NOT NULL DEFAULT 0,
+    flagged_count        INTEGER NOT NULL DEFAULT 0,
+    incomplete_count     INTEGER NOT NULL DEFAULT 0,
+    pending_finalization INTEGER NOT NULL DEFAULT 0,
+    finalized_count      INTEGER NOT NULL DEFAULT 0,
+    domain_scores        JSONB   NOT NULL DEFAULT '[]'::jsonb,
+    narrative            TEXT    NOT NULL DEFAULT '',
+    generated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
+-- updated_at maintenance.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER users_set_updated_at       BEFORE UPDATE ON users       FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER vendors_set_updated_at     BEFORE UPDATE ON vendors     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER assessments_set_updated_at BEFORE UPDATE ON assessments FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER questions_set_updated_at   BEFORE UPDATE ON questions   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER rubrics_set_updated_at     BEFORE UPDATE ON rubrics     FOR EACH ROW EXECUTE FUNCTION set_updated_at();

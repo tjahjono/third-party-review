@@ -1,0 +1,11 @@
+{{ define "error" }}
+<div class="alert alert-danger" role="alert">
+  <strong class="d-block">{{ .Message }}</strong>
+  {{ if .Hint }}<div class="mt-1 small">{{ .Hint }}</div>{{ end }}
+  {{ if .Fields }}
+    <ul class="mb-0 mt-2 small ps-3">
+      {{ range .Fields }}<li>{{ .Message }}</li>{{ end }}
+    </ul>
+  {{ end }}
+</div>
+{{ end }}

@@ -1,0 +1,57 @@
+{{ define "content" }}
+{{ $d := .Data }}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Vendors</h1>
+    <p class="text-secondary mb-0">{{ $d.Total }} vendor(s)</p>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-lg-4">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h5 card-title mb-3">Add a vendor</h2>
+        <form hx-post="/vendors" hx-target="#vendor-table" hx-swap="outerHTML"
+              hx-on::after-request="if(event.detail.successful) this.reset()">
+          <div class="mb-3">
+            <label class="form-label" for="vname">Name</label>
+            <input class="form-control" id="vname" type="text" name="name" required maxlength="200"
+                   placeholder="Acme Corp">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="vcontact">Contact name</label>
+            <input class="form-control" id="vcontact" type="text" name="contact_name" placeholder="Jane Doe">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="vemail">Contact email</label>
+            <input class="form-control" id="vemail" type="email" name="contact_email"
+                   placeholder="security@acme.example">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="vnotes">Notes</label>
+            <textarea class="form-control" id="vnotes" name="notes" rows="3"
+                      placeholder="Scope of the engagement, data handled, anything worth remembering."></textarea>
+          </div>
+          <button class="btn btn-primary" type="submit">Add vendor</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-8">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h5 card-title mb-3">All vendors</h2>
+        <input class="form-control mb-3" type="search" name="q" placeholder="Search vendors..."
+               value="{{ $d.Search }}"
+               hx-get="/vendors?partial=1"
+               hx-trigger="input changed delay:300ms, search"
+               hx-target="#vendor-table"
+               hx-swap="outerHTML">
+        {{ template "vendor_table" $d }}
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

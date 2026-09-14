@@ -1,0 +1,56 @@
+{{ define "content" }}
+{{ $d := .Data }}
+<div class="mb-4">
+  <h1 class="h3 mb-1">New assessment</h1>
+  <p class="text-secondary mb-0">
+    Upload a completed vendor questionnaire. You confirm the column mapping on the next screen.
+  </p>
+</div>
+
+<div class="row">
+  <div class="col-12 col-lg-7">
+    <div class="card">
+      <div class="card-body">
+        <div id="upload-error"></div>
+        <form method="post" action="/assessments" enctype="multipart/form-data"
+              hx-post="/assessments" hx-encoding="multipart/form-data"
+              hx-target="#upload-error" hx-swap="innerHTML">
+          <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+
+          <div class="mb-3">
+            <label class="form-label" for="vendor">Vendor</label>
+            {{ if $d.Vendors }}
+            <select class="form-select" id="vendor" name="vendor_id" required>
+              <option value="">Choose a vendor...</option>
+              {{ range $d.Vendors }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+            </select>
+            {{ else }}
+            <p class="text-secondary mb-0">No vendors yet &mdash; <a href="/vendors">add one first</a>.</p>
+            {{ end }}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="title">Assessment title</label>
+            <input class="form-control" id="title" type="text" name="title" maxlength="200"
+                   placeholder="Leave blank to use the filename">
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label" for="file">Questionnaire file</label>
+            <input class="form-control" id="file" type="file" name="file" required
+                   accept=".xlsx,.xlsm,.xltx,.csv,.tsv">
+            <div class="form-text">
+              Excel or CSV. The standard 8-domain / 7-column template is detected automatically,
+              but any layout works &mdash; you map the columns on the next screen.
+            </div>
+          </div>
+
+          <button class="btn btn-primary" type="submit" {{ if not $d.Vendors }}disabled{{ end }}>
+            Upload and map
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

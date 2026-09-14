@@ -1,0 +1,113 @@
+{{ define "content" }}
+{{ $d := .Data }}
+{{ $a := $d.Assessment }}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">{{ $a.Title }}</h1>
+    <p class="text-secondary mb-0">
+      {{ $a.VendorName }}
+      {{ if $a.SourceFilename }}&middot; <span class="mono">{{ $a.SourceFilename }}</span>{{ end }}
+      &middot; uploaded {{ date $a.CreatedAt }}
+    </p>
+  </div>
+  <div class="d-flex flex-wrap align-items-center gap-2">
+    <span class="{{ statusBadge $a.Status }}">{{ $a.Status.Label }}</span>
+    {{ if and $a.ColumnMapping (not $d.Closed) }}
+      <a class="btn btn-outline-secondary btn-sm" href="/assessments/{{ $a.ID }}/mapping">Re-map columns</a>
+    {{ end }}
+    {{ if $d.Summary }}
+      <a class="btn btn-outline-secondary btn-sm" href="/assessments/{{ $a.ID }}/export.csv">Export CSV</a>
+    {{ end }}
+  </div>
+</div>
+
+{{ if $d.Questions }}
+<div class="card mb-4">
+  <div class="card-body">
+    {{ template "signoff_panel" $d }}
+  </div>
+</div>
+{{ end }}
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+      <div>
+        <h2 class="h5 card-title mb-1">AI review</h2>
+        <p class="text-secondary small mb-0">
+          The AI drafts a score, flags and assessor feedback for every answer.
+          Every draft needs a human sign-off.
+        </p>
+      </div>
+      {{ if and $a.Status.CanStartReview (not $d.Closed) }}
+      <button class="btn btn-primary"
+              hx-post="/assessments/{{ $a.ID }}/review"
+              hx-target="#review-status"
+              hx-swap="outerHTML">
+        {{ if $a.Summary }}Re-run review{{ else }}Start AI review{{ end }}
+      </button>
+      {{ end }}
+    </div>
+    {{ template "review_status" (dict "AssessmentID" $a.ID "Job" $d.Job "Polling" $d.Polling "Finished" false) }}
+  </div>
+</div>
+
+{{ if $d.Summary }}{{ template "summary_panel" $d }}{{ end }}
+
+{{ if not $d.Closed }}
+{{ template "rubric_panel" (dict "AssessmentID" $a.ID "Rubric" $d.Rubric) }}
+{{ end }}
+
+<div class="card">
+  <div class="card-body">
+    <div class="row g-2 align-items-center mb-3">
+      <div class="col-12 col-sm-6 col-lg-4">
+        <select class="form-select" name="domain" aria-label="Filter by domain"
+                hx-get="/assessments/{{ $a.ID }}/questions"
+                hx-include="[name='review_status'],[name='flagged']"
+                hx-target="#question-list"
+                hx-swap="outerHTML">
+          <option value="">All domains</option>
+          {{ $fd := $d.FilterDomain }}
+          {{ range $d.Domains }}
+          <option value="{{ .ID }}" {{ if eq $fd (printf "%d" .ID) }}selected{{ end }}>{{ .Name }}</option>
+          {{ end }}
+        </select>
+      </div>
+      <div class="col-12 col-sm-6 col-lg-4">
+        <select class="form-select" name="review_status" aria-label="Filter by review state"
+                hx-get="/assessments/{{ $a.ID }}/questions"
+                hx-include="[name='domain'],[name='flagged']"
+                hx-target="#question-list"
+                hx-swap="outerHTML">
+          <option value="">Any review state</option>
+          <option value="pending"    {{ if eq $d.FilterStatus "pending"    }}selected{{ end }}>Not reviewed</option>
+          <option value="ai_drafted" {{ if eq $d.FilterStatus "ai_drafted" }}selected{{ end }}>AI draft, needs sign-off</option>
+          <option value="finalized"  {{ if eq $d.FilterStatus "finalized"  }}selected{{ end }}>Finalized</option>
+        </select>
+      </div>
+      <div class="col-12 col-lg-4">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="flagged" value="1" id="flaggedonly"
+                 {{ if $d.FlaggedOnly }}checked{{ end }}
+                 hx-get="/assessments/{{ $a.ID }}/questions"
+                 hx-include="[name='domain'],[name='review_status']"
+                 hx-target="#question-list"
+                 hx-swap="outerHTML">
+          <label class="form-check-label" for="flaggedonly">Flagged only</label>
+        </div>
+      </div>
+    </div>
+
+    {{ if or $d.Questions $a.ColumnMapping }}
+      {{ template "question_list" $d }}
+    {{ else }}
+      <div class="text-center text-secondary py-5">
+        <p class="mb-3">This questionnaire has not been mapped yet.</p>
+        <a class="btn btn-primary" href="/assessments/{{ $a.ID }}/mapping">Map columns and ingest</a>
+      </div>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

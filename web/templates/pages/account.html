@@ -1,0 +1,140 @@
+{{ define "content" }}
+{{ $d := .Data }}
+{{ $u := $d.User }}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Your account</h1>
+    {{/* A user created without a display name gets their username as one, so
+         only show both when they actually differ. */}}
+    <p class="text-secondary mb-0">
+      {{ $u.Username }}{{ if and $u.DisplayName (ne $u.DisplayName $u.Username) }} &middot; {{ $u.DisplayName }}{{ end }}
+    </p>
+  </div>
+</div>
+
+{{ if $d.Error }}<div class="alert alert-danger">{{ $d.Error }}</div>{{ end }}
+
+{{ if $d.RecoveryCodes }}
+<div class="card border-warning mb-4">
+  <div class="card-body">
+    <h2 class="h5 card-title">Recovery codes</h2>
+    <p class="mb-2">
+      <strong>Save these now.</strong> They are shown once and never again. Each code signs you
+      in once if you lose your phone. Store them where you would store a password, not next to it.
+    </p>
+    <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 g-2 mt-1">
+      {{ range $d.RecoveryCodes }}
+      <div class="col">
+        <div class="border rounded bg-white text-center py-2 mono">{{ . }}</div>
+      </div>
+      {{ end }}
+    </div>
+  </div>
+</div>
+{{ end }}
+
+<div class="row g-4">
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5 card-title mb-3">Two-factor authentication</h2>
+
+        {{ if $d.Enrolment }}
+          <p class="text-secondary small">
+            Scan this with your authenticator app, then enter the code it shows to finish.
+          </p>
+          <div class="qr-frame mb-3">{{ safeSVG $d.Enrolment.QRSVG }}</div>
+          <p class="text-secondary small mb-1">Can't scan it? Add the account by hand with this secret:</p>
+          <p class="mono bg-light border rounded px-2 py-2 text-break">{{ $d.Enrolment.FormattedSecret }}</p>
+
+          <form method="post" action="/account/mfa/confirm">
+            <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+            <input type="hidden" name="secret" value="{{ $d.Enrolment.Secret }}">
+            <div class="mb-3">
+              <label class="form-label" for="mfacode">Code from your app</label>
+              <input class="form-control code-input" id="mfacode" type="text" name="code" required autofocus
+                     inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456">
+            </div>
+            <button class="btn btn-primary" type="submit">Turn on two-factor</button>
+          </form>
+
+        {{ else if $u.MFAEnabled }}
+          <p>
+            <span class="badge text-bg-success">On</span>
+            <span class="text-secondary small ms-1">enabled {{ dateOrDash $u.MFAEnrolledAt }}</span>
+          </p>
+          <p class="text-secondary small">
+            You'll be asked for a code from your authenticator app after your password.
+          </p>
+
+          <form method="post" action="/account/mfa/recovery-codes" class="mb-3">
+            <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+            <label class="form-label" for="rcpass">Issue new recovery codes</label>
+            <div class="input-group">
+              <input class="form-control" id="rcpass" type="password" name="password" required
+                     autocomplete="current-password" placeholder="Confirm your password">
+              <button class="btn btn-outline-secondary" type="submit">Regenerate</button>
+            </div>
+            <div class="form-text">The previous codes stop working.</div>
+          </form>
+
+          <hr>
+
+          <form method="post" action="/account/mfa/disable">
+            <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+            <label class="form-label" for="offpass">Turn two-factor off</label>
+            <div class="input-group">
+              <input class="form-control" id="offpass" type="password" name="password" required
+                     autocomplete="current-password" placeholder="Confirm your password">
+              <button class="btn btn-outline-danger" type="submit">Turn off</button>
+            </div>
+          </form>
+
+        {{ else }}
+          <p><span class="badge text-bg-light border">Off</span></p>
+          <p class="text-secondary small">
+            Optional, and set per account. With it on, signing in needs a 6-digit code from an
+            authenticator app as well as your password.
+          </p>
+          <form method="post" action="/account/mfa/begin">
+            <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+            <button class="btn btn-primary" type="submit">Set up two-factor</button>
+          </form>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5 card-title mb-3">Password</h2>
+        <form method="post" action="/account/password">
+          <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+          <div class="mb-3">
+            <label class="form-label" for="curpass">Current password</label>
+            <input class="form-control" id="curpass" type="password" name="current_password" required
+                   autocomplete="current-password">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="newpass">New password</label>
+            <input class="form-control" id="newpass" type="password" name="new_password" required
+                   minlength="12" autocomplete="new-password">
+            <div class="form-text">At least 12 characters.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="newpass2">Confirm new password</label>
+            <input class="form-control" id="newpass2" type="password" name="new_password_confirm" required
+                   minlength="12" autocomplete="new-password">
+          </div>
+          <button class="btn btn-primary" type="submit">Change password</button>
+        </form>
+
+        <hr>
+        <p class="text-secondary small mb-0">Last signed in: {{ dateOrDash $u.LastLoginAt }}</p>
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

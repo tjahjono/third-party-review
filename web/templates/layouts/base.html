@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ .Title }} &middot; TPSA Reviewer</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="icon" href="data:,">
+  <script src="/static/js/bootstrap.bundle.min.js" defer></script>
+  <script src="/static/js/htmx.min.js" defer></script>
+</head>
+{{/* The CSRF token is attached once here and inherited by every HTMX request
+     on the page, so no individual control can forget it. Plain (non-HTMX)
+     forms carry it as a hidden field instead. */}}
+<body class="d-flex flex-column min-vh-100"
+      {{ if .CSRFToken }}hx-headers='{"X-CSRF-Token": "{{ .CSRFToken }}"}'{{ end }}>
+
+{{ if .User }}
+<nav class="navbar navbar-expand-lg navbar-dark" style="background-color: var(--brand-red);">
+  <div class="container-xl">
+    <a class="navbar-brand d-flex align-items-center fw-semibold" href="/assessments">
+      <span class="navbar-brand-mark">TP</span>TPSA Reviewer
+    </a>
+
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+            data-bs-target="#mainnav" aria-controls="mainnav"
+            aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div class="collapse navbar-collapse" id="mainnav">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item">
+          <a class="nav-link {{ if eq .Active "assessments" }}active fw-semibold{{ end }}"
+             href="/assessments">Assessments</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {{ if eq .Active "vendors" }}active fw-semibold{{ end }}"
+             href="/vendors">Vendors</a>
+        </li>
+      </ul>
+
+      <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-light btn-sm fw-semibold" href="/assessments/new">New assessment</a>
+
+        <div class="dropdown">
+          <button class="btn btn-sm dropdown-toggle text-white border-0" type="button"
+                  data-bs-toggle="dropdown" aria-expanded="false">
+            {{ defaultStr .User.Username .User.DisplayName }}
+            {{ if .User.MFAEnabled }}
+              <span class="badge text-bg-light ms-1" title="Two-factor authentication is on">2FA</span>
+            {{ end }}
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><a class="dropdown-item" href="/account">Your account</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li>
+              <form method="post" action="/logout" class="px-3 py-1">
+                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                <button class="btn btn-outline-secondary btn-sm w-100" type="submit">Sign out</button>
+              </form>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+{{ else }}
+<nav class="navbar navbar-dark" style="background-color: var(--brand-red);">
+  <div class="container-xl">
+    <span class="navbar-brand d-flex align-items-center fw-semibold mb-0">
+      <span class="navbar-brand-mark">TP</span>TPSA Reviewer
+    </span>
+  </div>
+</nav>
+{{ end }}
+
+<main class="container-xl flex-grow-1 py-4">
+  {{ if .Flash }}
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+      {{ .Flash }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+  {{ end }}
+  {{ if .Error }}
+    <div class="alert alert-danger" role="alert">{{ .Error }}</div>
+  {{ end }}
+  <div id="flash"></div>
+  {{ block "content" . }}{{ end }}
+</main>
+
+<footer class="border-top py-3 mt-auto">
+  <div class="container-xl">
+    <small class="text-secondary">
+      Internal tool. AI output is always a draft &mdash; a human assessor signs off every finding.
+    </small>
+  </div>
+</footer>
+</body>
+</html>

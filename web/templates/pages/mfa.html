@@ -1,0 +1,42 @@
+{{ define "content" }}
+{{ $d := .Data }}
+<div class="row justify-content-center">
+  <div class="col-12 col-sm-10 col-md-7 col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h1 class="h4 mb-2">Two-factor authentication</h1>
+        <p class="text-secondary small">Enter the current 6-digit code from your authenticator app.</p>
+
+        {{ if $d.Error }}<div class="alert alert-danger py-2 small">{{ $d.Error }}</div>{{ end }}
+
+        <form method="post" action="/login/mfa">
+          <input type="hidden" name="next" value="{{ $d.Next }}">
+          <div class="mb-3">
+            <label class="form-label" for="code">Authentication code</label>
+            {{/* inputmode and autocomplete let a phone keyboard and a password
+                 manager do the right thing; the field stays long enough to
+                 accept a recovery code instead. */}}
+            <input class="form-control code-input" id="code" type="text" name="code" required autofocus
+                   autocomplete="one-time-code" inputmode="numeric" placeholder="123456" maxlength="24">
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Verify</button>
+        </form>
+
+        <details class="mt-4 small text-secondary">
+          <summary class="fw-semibold">Lost your phone?</summary>
+          <p class="mt-2 mb-0">
+            Enter one of the recovery codes you saved when you switched two-factor on.
+            Each one works once. If you have none left, ask a colleague with database
+            access to clear <code>mfa_enabled</code> on your account.
+          </p>
+        </details>
+
+        <hr class="my-3">
+        <form method="post" action="/logout">
+          <button class="btn btn-link btn-sm p-0 text-secondary" type="submit">Cancel and sign out</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

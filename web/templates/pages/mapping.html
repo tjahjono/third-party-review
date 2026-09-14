@@ -1,0 +1,62 @@
+{{ define "content" }}
+{{ $d := .Data }}
+<div class="mb-4">
+  <h1 class="h3 mb-1">Map columns &amp; confirm domains</h1>
+  {{ with $d.Assessment }}
+  <p class="text-secondary mb-0">
+    {{ .Title }} &middot; {{ .VendorName }} &middot; <span class="mono">{{ .SourceFilename }}</span>
+  </p>
+  {{ end }}
+</div>
+
+{{ if $d.Preview }}
+<form id="mapping-form" method="post" action="/assessments/{{ $d.Assessment.ID }}/mapping">
+  <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+  <input type="hidden" name="header_row" value="{{ $d.Preview.HeaderRow }}">
+
+  {{ with $d.Preview.Grid }}
+  {{ if gt (len .SheetNames) 1 }}
+  <div class="card mb-4">
+    <div class="card-body">
+      <h2 class="h5 card-title">Worksheet</h2>
+      <p class="text-secondary small">
+        Reading <strong>{{ .SheetName }}</strong>. Pick another if the questions are elsewhere.
+      </p>
+      <div class="d-flex flex-wrap gap-2">
+        {{ $current := .SheetName }}
+        {{ range .SheetNames }}
+        <a class="btn btn-sm {{ if eq . $current }}btn-primary{{ else }}btn-outline-secondary{{ end }}"
+           href="/assessments/{{ $d.Assessment.ID }}/mapping?sheet={{ . }}">{{ . }}</a>
+        {{ end }}
+      </div>
+      <input type="hidden" name="sheet" value="{{ .SheetName }}">
+    </div>
+  </div>
+  {{ else }}
+  <input type="hidden" name="sheet" value="{{ .SheetName }}">
+  {{ end }}
+  {{ end }}
+
+  {{ template "mapping_preview" $d }}
+
+  <div class="sticky-actions d-flex justify-content-end gap-2 p-3 mt-4">
+    <a class="btn btn-outline-secondary" href="/assessments">Cancel</a>
+    <button class="btn btn-primary" type="submit" {{ if not $d.Preview.Ingestable }}disabled{{ end }}>
+      {{ if $d.Preview.Ingestable }}
+        Confirm and ingest {{ $d.Preview.QuestionCount }} question(s)
+      {{ else }}
+        Map the Question column to continue
+      {{ end }}
+    </button>
+  </div>
+</form>
+
+{{ else }}
+<div class="card">
+  <div class="card-body">
+    <p class="text-secondary">The file could not be parsed, so there is nothing to map.</p>
+    <a class="btn btn-outline-secondary" href="/assessments">Back to assessments</a>
+  </div>
+</div>
+{{ end }}
+{{ end }}

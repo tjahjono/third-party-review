@@ -1,0 +1,52 @@
+{{ define "rubric_panel" }}
+<div class="card mb-4" id="rubric-panel">
+  <div class="card-body">
+    <h2 class="h5 card-title">Rubric</h2>
+
+    {{ if .Rubric }}
+      <p class="mb-2">
+        <strong>{{ .Rubric.Name }}</strong>
+        {{ if .Rubric.Reusable }}<span class="badge text-bg-light border ms-1">reusable</span>{{ end }}
+      </p>
+      <pre class="bg-light border rounded p-2 small mb-3"
+           style="max-height: 14rem; overflow:auto; white-space: pre-wrap;">{{ truncate 800 .Rubric.Content }}</pre>
+      <button class="btn btn-outline-danger btn-sm"
+              hx-delete="/assessments/{{ .AssessmentID }}/rubric"
+              hx-target="#rubric-panel"
+              hx-swap="outerHTML">Remove rubric</button>
+
+    {{ else }}
+      <p class="text-secondary small">
+        Optional. Attach a policy or checklist and the AI will compare every answer against it,
+        raising a gap for each requirement the answer fails to meet.
+      </p>
+      <form hx-post="/assessments/{{ .AssessmentID }}/rubric"
+            hx-target="#rubric-panel"
+            hx-swap="outerHTML"
+            hx-encoding="multipart/form-data">
+        <div class="row g-3">
+          <div class="col-12 col-md-5">
+            <label class="form-label" for="rubname">Name</label>
+            <input class="form-control" id="rubname" type="text" name="name"
+                   placeholder="e.g. Vendor Security Policy v3">
+            <label class="form-label mt-3" for="rubfile">...or upload a text file</label>
+            <input class="form-control" id="rubfile" type="file" name="file" accept=".txt,.md,.csv">
+          </div>
+          <div class="col-12 col-md-7">
+            <label class="form-label" for="rubcontent">Paste the policy or criteria</label>
+            <textarea class="form-control" id="rubcontent" name="content" rows="6"
+                      placeholder="Encryption at rest must be AES-256 or stronger..."></textarea>
+          </div>
+        </div>
+        <div class="form-check mt-3">
+          <input class="form-check-input" type="checkbox" name="reusable" value="1" id="reusable">
+          <label class="form-check-label" for="reusable">
+            Make this rubric available to other assessments
+          </label>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Attach rubric</button>
+      </form>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

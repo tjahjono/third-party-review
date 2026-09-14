@@ -1,0 +1,69 @@
+# Docker Compose is the deployment target: one app container, one Postgres.
+# Run from the repository root:  docker compose -f docker/docker-compose.yml up
+name: tpsa-reviewer
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tpsa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tpsa}
+      POSTGRES_DB: ${POSTGRES_DB:-tpsa}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Exposed on localhost only, for psql and inspection during development.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      # The app runs migrations on startup, so it must not start against a
+      # database that is still initialising.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tpsa} -d ${POSTGRES_DB:-tpsa}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ADDR: ":8080"
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      DATABASE_URL: postgres://${POSTGRES_USER:-tpsa}:${POSTGRES_PASSWORD:-tpsa}@postgres:5432/${POSTGRES_DB:-tpsa}?sslmode=disable
+      SESSION_TTL: ${SESSION_TTL:-12h}
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      BOOTSTRAP_USERNAME: ${BOOTSTRAP_USERNAME:-}
+      BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
+
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_CHAT_PATH: ${AI_CHAT_PATH:-/chat/completions}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-4096}
+      AI_TEMPERATURE: ${AI_TEMPERATURE:-0.2}
+      AI_TIMEOUT: ${AI_TIMEOUT:-120s}
+      AI_BATCH_SIZE: ${AI_BATCH_SIZE:-8}
+      AI_MAX_CONCURRENCY: ${AI_MAX_CONCURRENCY:-2}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      # distroless has no shell and no curl, so the check reuses the app's own
+      # binary rather than assuming a tool that is not in the image.
+      test: ["CMD", "/server", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  postgres-data:
