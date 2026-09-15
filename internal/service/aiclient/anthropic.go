@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"third-party-review/internal/config"
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/model"
+	"third-party-review/internal/service"
 )
 
 // Anthropic talks to the Messages API. It exists to prove the AIReviewer
@@ -158,20 +160,20 @@ func (c *Anthropic) do(ctx context.Context, body anthropicRequest) (string, erro
 }
 
 // ReviewAnswer evaluates a single answer.
-func (c *Anthropic) ReviewAnswer(ctx context.Context, req domain.ReviewRequest) (domain.ReviewResult, error) {
+func (c *Anthropic) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
 	text, err := c.complete(ctx, systemPrompt, BuildSingle(req))
 	if err != nil {
-		return domain.ReviewResult{}, err
+		return model.ReviewResult{}, err
 	}
 	return parseSingle(text, req.Question.QuestionID, c.Name(), c.cfg.Model)
 }
 
 // ReviewBatch evaluates several answers in one call.
-func (c *Anthropic) ReviewBatch(ctx context.Context, req domain.BatchReviewRequest) (domain.BatchReviewResponse, error) {
+func (c *Anthropic) ReviewBatch(ctx context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
 	user := BuildBatch(req)
 	text, err := c.complete(ctx, systemPrompt, user)
 	if err != nil {
-		return domain.BatchReviewResponse{}, err
+		return dto.BatchReviewResponse{}, err
 	}
 	out, err := parseBatch(text, c.Name(), c.cfg.Model)
 	if err == nil {
@@ -182,13 +184,13 @@ func (c *Anthropic) ReviewBatch(ctx context.Context, req domain.BatchReviewReque
 		"). Reply again with the JSON object only. No explanation, no markdown fence, no text before or after it."
 	text2, err2 := c.complete(ctx, systemPrompt, retry)
 	if err2 != nil {
-		return domain.BatchReviewResponse{}, err
+		return dto.BatchReviewResponse{}, err
 	}
 	return parseBatch(text2, c.Name(), c.cfg.Model)
 }
 
 // Summarize writes the assessment-level narrative.
-func (c *Anthropic) Summarize(ctx context.Context, req domain.SummaryRequest) (string, error) {
+func (c *Anthropic) Summarize(ctx context.Context, req dto.SummaryRequest) (string, error) {
 	text, err := c.complete(ctx, summarySystemPrompt, BuildSummary(req))
 	if err != nil {
 		return "", err
@@ -196,4 +198,4 @@ func (c *Anthropic) Summarize(ctx context.Context, req domain.SummaryRequest) (s
 	return strings.TrimSpace(stripFences(text)), nil
 }
 
-var _ domain.AIReviewer = (*Anthropic)(nil)
+var _ service.AIReviewer = (*Anthropic)(nil)

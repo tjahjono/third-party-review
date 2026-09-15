@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 // Prompt construction is deliberately provider-neutral: it produces a system
@@ -61,7 +65,7 @@ const reviewSchema = `{
 }`
 
 // BuildSingle renders the user message for a one-question review.
-func BuildSingle(req domain.ReviewRequest) string {
+func BuildSingle(req dto.ReviewRequest) string {
 	var b strings.Builder
 	writeRubric(&b, req.RubricExcerpt)
 	writePeers(&b, req.PeerAnswers)
@@ -77,7 +81,7 @@ func BuildSingle(req domain.ReviewRequest) string {
 // BuildBatch renders the user message for a multi-question review. Reviewing a
 // domain together is what makes cross-answer contradiction detection possible:
 // the model can only notice that two answers conflict if it sees both.
-func BuildBatch(req domain.BatchReviewRequest) string {
+func BuildBatch(req dto.BatchReviewRequest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Vendor: %s\nAssessment: %s\n\n", orDash(req.VendorName), orDash(req.AssessmentTitle))
 	writeRubric(&b, req.RubricExcerpt)
@@ -106,7 +110,7 @@ Each element of "results" must be:
 // BuildSummary renders the user message for the assessment-level narrative.
 // The aggregate numbers are computed in Go and given to the model as facts, so
 // the narrative cannot disagree with the figures shown next to it.
-func BuildSummary(req domain.SummaryRequest) string {
+func BuildSummary(req dto.SummaryRequest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `Write the executive summary of a completed third-party security assessment.
 
@@ -119,12 +123,12 @@ Answers missing or incomplete: %d
 
 Per-domain residual risk:
 `, orDash(req.VendorName), orDash(req.AssessmentTitle), req.QuestionCount,
-		req.OverallScore, domain.BandFromFloat(req.OverallScore).Label(),
+		req.OverallScore, helper.RiskBandLabel(helper.BandFromFloat(req.OverallScore)),
 		req.FlaggedCount, req.IncompleteCount)
 
 	for _, d := range req.DomainScores {
 		fmt.Fprintf(&b, "- %s: %.2f/5 (%s), %d question(s), %d flagged, %d incomplete\n",
-			d.DomainName, d.WeightedScore, d.Band().Label(), d.QuestionCount, d.FlaggedCount, d.IncompleteCount)
+			d.DomainName, d.WeightedScore, helper.RiskBandLabel(helper.DomainBand(d)), d.QuestionCount, d.FlaggedCount, d.IncompleteCount)
 	}
 
 	if len(req.TopFindings) > 0 {
@@ -150,8 +154,8 @@ Write 3 to 5 short paragraphs of plain prose. Open with the overall risk positio
 	return b.String()
 }
 
-func writeQuestion(b *strings.Builder, q domain.QuestionContext) {
-	fmt.Fprintf(b, "question_id: %d\n", q.QuestionID)
+func writeQuestion(b *strings.Builder, q dto.QuestionContext) {
+	fmt.Fprintf(b, "question_id: %s\n", q.QuestionID)
 	fmt.Fprintf(b, "Domain: %s\n", orDash(q.DomainName))
 	if q.ScrutinyNote != "" {
 		fmt.Fprintf(b, "How to judge this domain: %s\n", q.ScrutinyNote)
@@ -186,7 +190,7 @@ func writeRubric(b *strings.Builder, rubric string) {
 	b.WriteString("\n</rubric>\n\n")
 }
 
-func writePeers(b *strings.Builder, peers []domain.PeerAnswer) {
+func writePeers(b *strings.Builder, peers []dto.PeerAnswer) {
 	if len(peers) == 0 {
 		return
 	}
@@ -204,7 +208,7 @@ func writePeers(b *strings.Builder, peers []domain.PeerAnswer) {
 // leniently: score and confidence accept either a number or a numeric string,
 // because smaller models quote numbers unpredictably.
 type rawResult struct {
-	QuestionID   int64      `json:"question_id"`
+	QuestionID   uuid.UUID  `json:"question_id"`
 	RiskScore    flexNumber `json:"risk_score"`
 	Completeness string     `json:"completeness"`
 	Flags        []rawFlag  `json:"flags"`
@@ -214,10 +218,10 @@ type rawResult struct {
 }
 
 type rawFlag struct {
-	Kind     string     `json:"kind"`
-	Detail   string     `json:"detail"`
-	Severity flexNumber `json:"severity"`
-	Related  []int64    `json:"related_question_ids"`
+	Kind     string      `json:"kind"`
+	Detail   string      `json:"detail"`
+	Severity flexNumber  `json:"severity"`
+	Related  []uuid.UUID `json:"related_question_ids"`
 }
 
 type rawBatch struct {
@@ -251,31 +255,33 @@ func (f *flexNumber) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// toDomain converts a decoded model result into a persistable ReviewResult.
-func (r rawResult) toDomain(provider, model string) domain.ReviewResult {
-	out := domain.ReviewResult{
+// toResult converts a decoded model response into a persistable ReviewResult.
+// The model name is a parameter rather than a field so this package's `model`
+// import keeps meaning the package.
+func (r rawResult) toResult(provider, modelName string) model.ReviewResult {
+	out := model.ReviewResult{
 		QuestionID:    r.QuestionID,
-		RiskScore:     domain.RiskScore(int(r.RiskScore + 0.5)),
-		Completeness:  domain.Completeness(normalizeEnum(r.Completeness)),
+		RiskScore:     model.RiskScore(int(r.RiskScore + 0.5)),
+		Completeness:  model.Completeness(normalizeEnum(r.Completeness)),
 		Rationale:     r.Rationale,
 		FeedbackDraft: r.Feedback,
 		Confidence:    float64(r.Confidence),
 		Provider:      provider,
-		Model:         model,
+		Model:         modelName,
 	}
 	for _, f := range r.Flags {
-		kind := domain.FlagKind(normalizeEnum(f.Kind))
+		kind := model.FlagKind(normalizeEnum(f.Kind))
 		if kind == "" {
 			continue
 		}
-		out.Flags = append(out.Flags, domain.Flag{
+		out.Flags = append(out.Flags, model.Flag{
 			Kind:               kind,
 			Detail:             f.Detail,
-			Severity:           domain.RiskScore(int(f.Severity + 0.5)),
+			Severity:           model.RiskScore(int(f.Severity + 0.5)),
 			RelatedQuestionIDs: f.Related,
 		})
 	}
-	out.Normalize()
+	helper.NormalizeResult(&out)
 	return out
 }
 

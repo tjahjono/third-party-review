@@ -5,14 +5,16 @@ import (
 	"net/http"
 
 	"third-party-review/internal/delivery/http/middleware"
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 	"third-party-review/internal/service/auth"
 )
 
 type accountView struct {
-	User *domain.User
+	User *model.User
 	// Enrolment is set while an MFA enrolment is in progress.
-	Enrolment *auth.Enrolment
+	Enrolment *dto.MFAEnrolment
 	// RecoveryCodes are shown exactly once, immediately after enrolment.
 	RecoveryCodes []string
 	Flash         string
@@ -36,7 +38,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 
@@ -48,8 +50,8 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Auth.ChangePassword(r.Context(), user.ID, r.FormValue("current_password"), next); err != nil {
-		var ve domain.ValidationError
+	if err := h.auth.ChangePassword(r.Context(), user.ID, r.FormValue("current_password"), next); err != nil {
+		var ve helper.ValidationError
 		if errors.As(err, &ve) {
 			h.renderAccount(w, r, http.StatusUnprocessableEntity, accountView{User: user, Error: ve.Message})
 			return
@@ -66,9 +68,9 @@ func (h *Handler) BeginMFA(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	enrolment, err := h.Auth.BeginMFAEnrolment(r.Context(), user.ID)
+	enrolment, err := h.auth.BeginMFAEnrolment(r.Context(), user.ID)
 	if err != nil {
-		var ve domain.ValidationError
+		var ve helper.ValidationError
 		if errors.As(err, &ve) {
 			h.renderAccount(w, r, http.StatusUnprocessableEntity, accountView{User: user, Error: ve.Message})
 			return
@@ -87,14 +89,14 @@ func (h *Handler) ConfirmMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 
 	secret := r.FormValue("secret")
-	codes, err := h.Auth.CompleteMFAEnrolment(r.Context(), user.ID, secret, r.FormValue("code"))
+	codes, err := h.auth.CompleteMFAEnrolment(r.Context(), user.ID, secret, r.FormValue("code"))
 	if err != nil {
-		var ve domain.ValidationError
+		var ve helper.ValidationError
 		if errors.As(err, &ve) {
 			// Re-render the same enrolment rather than generating a new
 			// secret: the user has already added this one to their app, and
@@ -110,7 +112,7 @@ func (h *Handler) ConfirmMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshed, err := h.Auth.GetUser(r.Context(), user.ID)
+	refreshed, err := h.auth.GetUser(r.Context(), user.ID)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -129,11 +131,11 @@ func (h *Handler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
-	if err := h.Auth.DisableMFA(r.Context(), user.ID, r.FormValue("password")); err != nil {
-		var ve domain.ValidationError
+	if err := h.auth.DisableMFA(r.Context(), user.ID, r.FormValue("password")); err != nil {
+		var ve helper.ValidationError
 		if errors.As(err, &ve) {
 			h.renderAccount(w, r, http.StatusUnprocessableEntity, accountView{User: user, Error: ve.Message})
 			return
@@ -141,7 +143,7 @@ func (h *Handler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	refreshed, _ := h.Auth.GetUser(r.Context(), user.ID)
+	refreshed, _ := h.auth.GetUser(r.Context(), user.ID)
 	h.renderAccount(w, r, http.StatusOK, accountView{
 		User:  refreshed,
 		Flash: "Two-factor authentication is off.",
@@ -155,12 +157,12 @@ func (h *Handler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
-	codes, err := h.Auth.RegenerateRecoveryCodes(r.Context(), user.ID, r.FormValue("password"))
+	codes, err := h.auth.RegenerateRecoveryCodes(r.Context(), user.ID, r.FormValue("password"))
 	if err != nil {
-		var ve domain.ValidationError
+		var ve helper.ValidationError
 		if errors.As(err, &ve) {
 			h.renderAccount(w, r, http.StatusUnprocessableEntity, accountView{User: user, Error: ve.Message})
 			return
@@ -188,7 +190,7 @@ func (h *Handler) renderAccount(w http.ResponseWriter, r *http.Request, status i
 
 // rebuildEnrolment recreates the display material for a secret the user is
 // part-way through enrolling, so a wrong code does not restart the process.
-func rebuildEnrolment(secret, username string) *auth.Enrolment {
+func rebuildEnrolment(secret, username string) *dto.MFAEnrolment {
 	if secret == "" {
 		return nil
 	}

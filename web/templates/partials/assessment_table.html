@@ -20,10 +20,10 @@
             {{ if .SourceFilename }}<div class="text-secondary small">{{ .SourceFilename }}</div>{{ end }}
           </td>
           <td>{{ .VendorName }}</td>
-          <td><span class="{{ statusBadge .Status }}">{{ .Status.Label }}</span></td>
+          <td><span class="{{ statusBadge .Status }}">{{ statusLabel .Status }}</span></td>
           <td class="text-end">
             {{ if .Summary }}
-              <span class="{{ bandClass .Summary.Band }}">{{ score .Summary.OverallScore }}</span>
+              <span class="{{ bandClass (summaryBand .Summary) }}">{{ score .Summary.OverallScore }}</span>
             {{ else }}
               <span class="text-secondary">&mdash;</span>
             {{ end }}

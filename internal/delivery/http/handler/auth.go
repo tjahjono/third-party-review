@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"third-party-review/internal/delivery/http/middleware"
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
 	"third-party-review/internal/service/auth"
 )
 
@@ -34,12 +34,12 @@ func (h *Handler) LoginPage(w http.ResponseWriter, r *http.Request) {
 	// A pending session means the password step is done and only the code is
 	// outstanding; send the user to the code prompt rather than making them
 	// type the password again.
-	if _, err := h.Auth.PendingSession(r.Context(), middleware.SessionIDFrom(r)); err == nil {
+	if _, err := h.auth.PendingSession(r.Context(), middleware.SessionIDFrom(r)); err == nil {
 		h.redirect(w, r, "/login/mfa")
 		return
 	}
 
-	n, err := h.Auth.UserCount(r.Context())
+	n, err := h.auth.UserCount(r.Context())
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -54,13 +54,13 @@ func (h *Handler) LoginPage(w http.ResponseWriter, r *http.Request) {
 // Login verifies the credentials and opens a session.
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 	username := r.FormValue("username")
 	next := safeNext(r.FormValue("next"))
 
-	res, err := h.Auth.Login(r.Context(), username, r.FormValue("password"),
+	res, err := h.auth.Login(r.Context(), username, r.FormValue("password"),
 		r.UserAgent(), middleware.ClientIP(r))
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
@@ -87,13 +87,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	middleware.SetSessionCookie(w, r, res.Session.ID, int(h.SessionTTL.Seconds()))
+	middleware.SetSessionCookie(w, r, res.Session.ID, int(h.sessionTTL.Seconds()))
 	h.redirect(w, r, next)
 }
 
 // MFAPage prompts for the authenticator code.
 func (h *Handler) MFAPage(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.Auth.PendingSession(r.Context(), middleware.SessionIDFrom(r)); err != nil {
+	if _, err := h.auth.PendingSession(r.Context(), middleware.SessionIDFrom(r)); err != nil {
 		h.redirect(w, r, "/login")
 		return
 	}
@@ -107,13 +107,13 @@ func (h *Handler) MFAPage(w http.ResponseWriter, r *http.Request) {
 // VerifyMFA completes a pending login.
 func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 	sessionID := middleware.SessionIDFrom(r)
 	next := safeNext(r.FormValue("next"))
 
-	if _, err := h.Auth.VerifyMFA(r.Context(), sessionID, r.FormValue("code")); err != nil {
+	if _, err := h.auth.VerifyMFA(r.Context(), sessionID, r.FormValue("code")); err != nil {
 		switch {
 		case errors.Is(err, auth.ErrInvalidMFACode):
 			h.renderPage(w, r, http.StatusUnauthorized, "mfa", pageData{
@@ -134,14 +134,14 @@ func (h *Handler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Re-issue the cookie with the full session lifetime.
-	middleware.SetSessionCookie(w, r, sessionID, int(h.SessionTTL.Seconds()))
+	middleware.SetSessionCookie(w, r, sessionID, int(h.sessionTTL.Seconds()))
 	h.redirect(w, r, next)
 }
 
 // Logout ends the session.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
-	if err := h.Auth.Logout(r.Context(), middleware.SessionIDFrom(r)); err != nil {
-		h.Log.Warn("could not delete the session on logout", "error", err)
+	if err := h.auth.Logout(r.Context(), middleware.SessionIDFrom(r)); err != nil {
+		h.log.Warn("could not delete the session on logout", "error", err)
 	}
 	middleware.ClearSessionCookie(w, r)
 	h.redirect(w, r, "/login")
@@ -152,11 +152,11 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 // later.
 func (h *Handler) FirstRunSetup(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 
-	n, err := h.Auth.UserCount(r.Context())
+	n, err := h.auth.UserCount(r.Context())
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -176,8 +176,8 @@ func (h *Handler) FirstRunSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.Auth.CreateUser(r.Context(), username, r.FormValue("display_name"), password); err != nil {
-		var ve domain.ValidationError
+	if _, err := h.auth.CreateUser(r.Context(), username, r.FormValue("display_name"), password); err != nil {
+		var ve helper.ValidationError
 		if errors.As(err, &ve) {
 			h.renderPage(w, r, http.StatusUnprocessableEntity, "login", pageData{
 				Title: "Set up", Active: "login",
@@ -189,12 +189,12 @@ func (h *Handler) FirstRunSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.Auth.Login(r.Context(), username, password, r.UserAgent(), middleware.ClientIP(r))
+	res, err := h.auth.Login(r.Context(), username, password, r.UserAgent(), middleware.ClientIP(r))
 	if err != nil {
 		h.redirect(w, r, "/login")
 		return
 	}
-	middleware.SetSessionCookie(w, r, res.Session.ID, int(h.SessionTTL.Seconds()))
+	middleware.SetSessionCookie(w, r, res.Session.ID, int(h.sessionTTL.Seconds()))
 	h.redirect(w, r, "/assessments")
 }
 

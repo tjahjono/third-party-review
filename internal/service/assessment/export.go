@@ -8,7 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 // ExportCSV writes the reviewed assessment as CSV.
@@ -18,16 +21,16 @@ import (
 // a dedicated column. An export that silently mixed signed findings with
 // unreviewed AI text would be the most dangerous artefact this tool could
 // produce, because it reads as a finished assessment.
-func (s *Service) ExportCSV(ctx context.Context, assessmentID int64, w io.Writer) error {
-	a, err := s.repos.Assessments.GetByID(ctx, assessmentID)
+func (s *Service) ExportCSV(ctx context.Context, assessmentID uuid.UUID, w io.Writer) error {
+	a, err := s.assessments.GetByID(ctx, assessmentID)
 	if err != nil {
 		return err
 	}
-	questions, err := s.repos.Questions.ListForReview(ctx, assessmentID)
+	questions, err := s.questions.ListForReview(ctx, assessmentID)
 	if err != nil {
 		return err
 	}
-	results, err := s.repos.Results.LatestByAssessment(ctx, assessmentID, nil)
+	results, err := s.results.LatestByAssessment(ctx, assessmentID, nil)
 	if err != nil {
 		return err
 	}
@@ -57,11 +60,11 @@ func (s *Service) ExportCSV(ctx context.Context, assessmentID int64, w io.Writer
 	}
 
 	for _, q := range questions {
-		feedback, unconfirmed := q.EffectiveFeedback()
+		feedback, unconfirmed := helper.EffectiveFeedback(q)
 
 		status := "Signed off"
 		switch {
-		case q.ReviewStatus == domain.ReviewFinalized:
+		case q.ReviewStatus == model.ReviewFinalized:
 			status = "Signed off"
 		case strings.TrimSpace(feedback) == "":
 			status = "NOT REVIEWED - no feedback"
@@ -73,18 +76,18 @@ func (s *Service) ExportCSV(ctx context.Context, assessmentID int64, w io.Writer
 			score, band, completeness, flags, rationale string
 		)
 		if r := results[q.ID]; r != nil {
-			if r.RiskScore.Valid() {
+			if helper.ValidRiskScore(r.RiskScore) {
 				score = strconv.Itoa(int(r.RiskScore))
-				band = r.RiskScore.Band().Label()
+				band = helper.RiskBandLabel(helper.Band(r.RiskScore))
 			}
-			completeness = r.Completeness.Label()
+			completeness = helper.CompletenessLabel(r.Completeness)
 			rationale = r.Rationale
 			labels := make([]string, 0, len(r.Flags))
 			for _, f := range r.Flags {
 				if f.Detail != "" {
-					labels = append(labels, f.Kind.Label()+": "+f.Detail)
+					labels = append(labels, helper.FlagKindLabel(f.Kind)+": "+f.Detail)
 				} else {
-					labels = append(labels, f.Kind.Label())
+					labels = append(labels, helper.FlagKindLabel(f.Kind))
 				}
 			}
 			flags = strings.Join(labels, " | ")
@@ -126,7 +129,7 @@ func (s *Service) ExportCSV(ctx context.Context, assessmentID int64, w io.Writer
 }
 
 // ExportFilename builds a filesystem-safe filename for the export.
-func ExportFilename(a *domain.Assessment) string {
+func ExportFilename(a *model.Assessment) string {
 	safe := func(s string) string {
 		var b strings.Builder
 		for _, r := range s {
@@ -142,7 +145,7 @@ func ExportFilename(a *domain.Assessment) string {
 	name := safe(a.VendorName) + "-" + safe(a.Title)
 	name = strings.Trim(strings.ReplaceAll(name, "--", "-"), "-")
 	if name == "" {
-		name = "assessment-" + strconv.FormatInt(a.ID, 10)
+		name = "assessment-" + a.ID.String()
 	}
 	return name + ".csv"
 }

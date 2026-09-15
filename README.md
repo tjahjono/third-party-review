@@ -66,13 +66,20 @@ falls back to its default.
 Migrations run automatically on startup, including the seed of the 8 TPSA
 domains. Nothing else to initialise.
 
+> **Upgrading from a build before the uuid change:** migration `000001` was
+> rewritten rather than added to, so the schema a running database already has
+> does not match it. Run `make reset` once to drop the volume and let it
+> rebuild. This deletes existing assessments — there is no migration path from
+> the old bigint keys, and the project has no production data to preserve.
+
 Useful targets: `make logs`, `make down` (stop, keep the data),
 `make reset` (stop and delete the database volume), `make psql`.
 `make help` lists them all.
 
 ### Without Docker
 
-Needs Go 1.25.4 (the version pinned in `go.mod`) and a reachable Postgres 14+.
+Needs Go 1.25.4 (the version pinned in `go.mod`) and a reachable Postgres 13+
+(`gen_random_uuid()` is built in from 13).
 
 ```bash
 createdb tpsa
@@ -315,16 +322,94 @@ signal.
 ## Architecture
 
 Strict dependency direction: `delivery → service → repository → database`.
-Domain types and interfaces live in `internal/domain` and are imported by every
-layer; nothing above `internal/repository/postgres` imports pgx, and nothing
-above `internal/service/aiclient` knows which AI provider is configured.
+
+**Every boundary is an interface declared at its own layer's root.** Repository
+contracts live in `internal/repository`, service contracts in `internal/service`,
+and the delivery contract in the handler package. Implementations depend on the
+contracts, never on each other, so any of them can be swapped or stubbed without
+touching the layers around it:
+
+| Package | Contracts |
+|---|---|
+| `internal/repository` | one interface per model — `VendorRepository`, `AssessmentRepository`, `UploadRepository`, `QuestionRepository`, `ReviewResultRepository`, `AssessmentSummaryRepository`, `RubricRepository`, `AssessmentRubricRepository`, `ReviewJobRepository`, `UserRepository`, `RecoveryCodeRepository`, `SessionRepository` — plus `TxManager` |
+| `internal/service` | `VendorService`, `IngestService`, `AssessmentService`, `SignOffService`, `RubricService`, `ReviewService`, `AuthService`, `AIReviewer`, `QuestionnaireParser` |
+| `delivery/http/handler/routes.go` | `Routes` — the delivery contract the router depends on instead of the concrete handler set |
+
+The compile-time assertions proving each implementation satisfies its contract
+sit in `routes.go`, the one place that knows both sides.
+
+### Where the types live
+
+| Package | Holds | Rule |
+|---|---|---|
+| `internal/model` | one struct per table, plus the enum types its columns are constrained to | data only, no behaviour; every field carries a `json` tag; ids are `uuid.UUID` |
+| `internal/dto` | the shapes that cross a boundary but are not rows — `AssessmentFilter`, `QuestionFilter`, the ingestion preview (`Grid`, `SourceRow`, `Section`, `IngestPreview`), the AI request/response envelopes, `LoginResult`, `MFAEnrolment`, `BulkFinalizeResult`, `SignOffProgress` | may carry behaviour; a contract can name one without delivery importing an implementation |
+| `internal/helper` | what more than one layer needs and no layer owns: the sentinel errors, `ValidationErrors`, the Postgres connection, risk banding, display labels, header normalisation | imports no repository, service or delivery package, so it can be imported anywhere |
+| `internal/service` | the validation rules (`ValidateVendor`, `ValidateAssessment`, `ValidateQuestion`, `ValidateRubric`, `ValidateColumnMapping`) | validation is a rule about what may be written, not a property of the data |
+
+`model` carrying no methods is the load-bearing part: read its file list and
+you have read the schema. The behaviour that used to hang off those types —
+`Validate`, `Band`, `Label`, `Percent` — moved to whichever of the three
+packages above owns it, and the templates reach it through registered template
+functions rather than calling methods on a row.
+
+Primary keys are `uuid.UUID`, defaulted by Postgres with `gen_random_uuid()`.
+The one exception is `sessions.id`, which stays an opaque random string: it is
+a cookie token, and typing it as a uuid would invite treating a guessed uuid as
+a valid session.
+
+Nothing above `internal/repository/postgres` imports pgx, and nothing above
+`internal/service/aiclient` knows which AI provider is configured.
+
+### The component pattern
+
+Every component in the repository, service and delivery layers is built the
+same way, in four steps:
+
+1. **Define the dependency interface** — what the component needs, named as
+   interfaces and nothing concrete.
+2. **Implement the concrete dependency** — the real thing that satisfies it.
+3. **Implement the struct and its methods** — fields are the interfaces from
+   step 1, held unexported.
+4. **A constructor that ensures the dependency is injected** — it validates and
+   returns an error, so incomplete wiring fails at startup naming the missing
+   field.
+
+| Layer | 1. Interface | 2. Concrete | 3. Struct | 4. Constructor |
+|---|---|---|---|---|
+| Repository | `postgres.ConnProvider`, `postgres.Querier` | `*postgres.DB` | `VendorRepo{db ConnProvider}` | `NewVendorRepo(ConnProvider)` |
+| Service | `assessment.Deps` of `repository.*Repository` | the Postgres repositories | `Service{vendors, questions, …}` | `assessment.New(Deps) (*Service, error)` |
+| Delivery | `handler.Deps` of `service.*Service` | the service structs | `Handler{assessments, reviews, auth}` | `handler.New(Deps) (*Handler, error)` |
+
+Two consequences worth knowing:
+
+**Services take the repositories they use, not the whole set.** `assessment.Deps`
+lists vendors, domains, assessments, questions, results, summaries and rubrics —
+so it is visible at a glance that ingestion does not touch jobs, users or
+sessions. `FromRepositories` is the adapter the main package uses to build a
+`Deps` from the full set.
+
+**The constructors return an error rather than panicking.** A missing dependency
+then fails at startup saying *which* one, instead of a nil-pointer panic on
+whichever request reaches that repository first. `MustNew` exists for fixtures
+that cannot meaningfully recover. `internal/service/assessment/deps_test.go`
+removes each dependency in turn and asserts the error names it.
+
+The `ConnProvider` indirection in the repository layer is what makes
+transactions invisible to repository code: the provider returns the transaction
+carried on the context when there is one and the pool otherwise, so no
+repository method needs a transaction-aware variant.
 
 ```
 cmd/server            main.go, wiring, graceful shutdown
 internal/
   config              env loading and validation
-  domain              entities + repository/service/AI interfaces
+  model               one struct per table; the ERD, in Go
+  dto                 filters, ingestion preview, AI envelopes, service results
+  helper              sentinel errors, DB connect, risk banding, labels
+  repository          one repository interface per model
   repository/postgres  pgx implementations, migrations runner
+  service              service contracts + validation rules
   service/
     parser            Excel/CSV reading, column mapping, domain detection
     assessment        vendors, assessments, ingestion

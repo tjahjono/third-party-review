@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 type userKeyType struct{}
@@ -16,21 +18,21 @@ var (
 )
 
 // WithUser attaches the authenticated user to the request context.
-func WithUser(ctx context.Context, u *domain.User) context.Context {
+func WithUser(ctx context.Context, u *model.User) context.Context {
 	return context.WithValue(ctx, userKey, u)
 }
 
 // UserFrom returns the authenticated user, or nil when the request is
 // unauthenticated.
-func UserFrom(ctx context.Context) *domain.User {
-	u, _ := ctx.Value(userKey).(*domain.User)
+func UserFrom(ctx context.Context) *model.User {
+	u, _ := ctx.Value(userKey).(*model.User)
 	return u
 }
 
 // UserIDFrom returns the authenticated user's id, or nil. Sign-off records who
 // signed; a nil id means the attribution is unknown, which is what an
 // unauthenticated deployment produces.
-func UserIDFrom(ctx context.Context) *int64 {
+func UserIDFrom(ctx context.Context) *uuid.UUID {
 	u := UserFrom(ctx)
 	if u == nil {
 		return nil
@@ -52,7 +54,7 @@ func CSRFTokenFrom(ctx context.Context) string {
 }
 
 // RequireUser is a convenience for handlers that must not run anonymously.
-func RequireUser(w http.ResponseWriter, r *http.Request) (*domain.User, bool) {
+func RequireUser(w http.ResponseWriter, r *http.Request) (*model.User, bool) {
 	u := UserFrom(r.Context())
 	if u == nil {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)

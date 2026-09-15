@@ -10,9 +10,9 @@
     <div class="row align-items-center g-4 mb-4">
       <div class="col-12 col-md-auto">
         <div class="d-flex align-items-center gap-3">
-          <div class="score-value {{ bandColor .Band }}">{{ score .OverallScore }}</div>
+          <div class="score-value {{ bandColor (summaryBand .) }}">{{ score .OverallScore }}</div>
           <div>
-            <div class="fw-semibold">{{ .Band.Label }} residual risk</div>
+            <div class="fw-semibold">{{ bandLabel (summaryBand .) }} residual risk</div>
             <div class="text-secondary small">
               weighted worst-case across {{ .ScoredCount }} scored answer(s)
             </div>
@@ -57,7 +57,7 @@
           {{ range .DomainScores }}
           <tr>
             <td>{{ .DomainName }}</td>
-            <td class="text-end"><span class="{{ bandClass .Band }}">{{ score .WeightedScore }}</span></td>
+            <td class="text-end"><span class="{{ bandClass (domainBand .) }}">{{ score .WeightedScore }}</span></td>
             <td class="text-end">{{ .QuestionCount }}</td>
             <td class="text-end">{{ .FlaggedCount }}</td>
             <td class="text-end">{{ .IncompleteCount }}</td>

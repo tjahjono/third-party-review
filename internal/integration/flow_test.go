@@ -8,7 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 // TestSchemaSeedsEightDomains pins the migration contract the parser depends
@@ -24,7 +28,7 @@ func TestSchemaSeedsEightDomains(t *testing.T) {
 	if len(domains) != 8 {
 		t.Fatalf("got %d seeded domains, want 8", len(domains))
 	}
-	for i, want := range domain.SeededDomainNames {
+	for i, want := range helper.SeededDomainNames {
 		if domains[i].Name != want {
 			t.Errorf("domain %d = %q, want %q (seed order must match)", i, domains[i].Name, want)
 		}
@@ -64,7 +68,7 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 	env.truncateAll(t)
 	ctx := context.Background()
 
-	vendor := &domain.Vendor{Name: "Acme Corp", ContactEmail: "security@acme.example"}
+	vendor := &model.Vendor{Name: "Acme Corp", ContactEmail: "security@acme.example"}
 	if err := env.Assess.CreateVendor(ctx, vendor); err != nil {
 		t.Fatalf("create vendor: %v", err)
 	}
@@ -76,7 +80,7 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
-	if a.Status != domain.StatusUploaded {
+	if a.Status != model.StatusUploaded {
 		t.Errorf("status after upload = %s, want uploaded", a.Status)
 	}
 	if a.Title != "acme tpsa 2026" {
@@ -97,7 +101,7 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 	if len(preview.Sections) != 2 {
 		t.Fatalf("preview found %d sections, want 2: %+v", len(preview.Sections), preview.Sections)
 	}
-	for _, tf := range domain.TemplateFields {
+	for _, tf := range dto.TemplateFields {
 		if _, ok := preview.Mapping.Bindings[tf.Field]; !ok {
 			t.Errorf("template field %s was not auto-mapped from the standard header", tf.Field)
 		}
@@ -116,7 +120,7 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if a.Status != domain.StatusMapped {
+	if a.Status != model.StatusMapped {
 		t.Errorf("status after mapping = %s, want mapped", a.Status)
 	}
 	if a.ColumnMapping == nil || a.ColumnMapping.ConfirmedAt == "" {
@@ -135,17 +139,17 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 	}
 	// Every question must belong to exactly one domain, with the name joined.
 	for _, q := range questions {
-		if q.DomainID == 0 || q.DomainName == "" {
+		if q.DomainID == uuid.Nil || q.DomainName == "" {
 			t.Errorf("question %q has no domain", q.QuestionText)
 		}
-		if q.ReviewStatus != domain.ReviewPending {
+		if q.ReviewStatus != model.ReviewPending {
 			t.Errorf("question %q starts at %s, want pending", q.QuestionText, q.ReviewStatus)
 		}
 	}
 	// The unanswered rows must survive ingestion rather than being dropped.
 	blank := 0
 	for _, q := range questions {
-		if q.AnswerIsBlank() {
+		if helper.AnswerIsBlank(q) {
 			blank++
 		}
 	}
@@ -168,7 +172,7 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 	// A second enqueue must be refused while one is outstanding.
 	if _, err := env.Review.Enqueue(ctx, a.ID); err == nil {
 		t.Error("a duplicate review was allowed while one was already queued")
-	} else if !errors.Is(err, domain.ErrInvalidInput) {
+	} else if !errors.Is(err, helper.ErrInvalidInput) {
 		t.Errorf("duplicate enqueue error = %v, want an invalid-input error", err)
 	}
 
@@ -185,7 +189,7 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload after review: %v", err)
 	}
-	if a.Status != domain.StatusReviewed {
+	if a.Status != model.StatusReviewed {
 		t.Errorf("status after review = %s, want reviewed", a.Status)
 	}
 	if a.CurrentRunID == nil || *a.CurrentRunID != claimed.ID {
@@ -204,7 +208,7 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 		if r == nil {
 			t.Fatalf("question %q has no result", q.QuestionText)
 		}
-		if !r.RiskScore.Valid() {
+		if !helper.ValidRiskScore(r.RiskScore) {
 			t.Errorf("question %q scored %d, outside the 1-5 scale", q.QuestionText, r.RiskScore)
 		}
 		if r.FeedbackDraft == "" {
@@ -215,14 +219,14 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 		}
 		// An unanswered question must be scored at the top of the scale and
 		// flagged, not quietly passed.
-		if q.AnswerIsBlank() {
+		if helper.AnswerIsBlank(q) {
 			if r.RiskScore != 5 {
 				t.Errorf("unanswered question %q scored %d, want 5", q.QuestionText, r.RiskScore)
 			}
-			if r.Completeness != domain.CompletenessMissing {
+			if r.Completeness != model.CompletenessMissing {
 				t.Errorf("unanswered question %q completeness = %s, want missing", q.QuestionText, r.Completeness)
 			}
-			if !r.HasFlag(domain.FlagMissingAnswer) {
+			if !helper.HasFlag(r, model.FlagMissingAnswer) {
 				t.Errorf("unanswered question %q was not flagged", q.QuestionText)
 			}
 		}
@@ -237,7 +241,7 @@ func TestFullIngestToReviewFlow(t *testing.T) {
 		if q.AssessorFeedbackDraft == "" {
 			t.Errorf("question %q has no draft on the question row", q.QuestionText)
 		}
-		if q.ReviewStatus != domain.ReviewAIDrafted {
+		if q.ReviewStatus != model.ReviewAIDrafted {
 			t.Errorf("question %q is %s, want ai_drafted", q.QuestionText, q.ReviewStatus)
 		}
 		if q.AssessorFeedbackFinal != "" {
@@ -299,14 +303,14 @@ func TestFinalizePreservesDraft(t *testing.T) {
 	if reloaded.AssessorFeedbackDraft != originalDraft {
 		t.Error("finalizing overwrote the AI draft; the original wording must always be recoverable")
 	}
-	if reloaded.ReviewStatus != domain.ReviewFinalized {
+	if reloaded.ReviewStatus != model.ReviewFinalized {
 		t.Errorf("status = %s, want finalized", reloaded.ReviewStatus)
 	}
 	if reloaded.FinalizedAt == nil {
 		t.Error("finalized_at was not stamped")
 	}
 
-	text, unconfirmed := reloaded.EffectiveFeedback()
+	text, unconfirmed := helper.EffectiveFeedback(reloaded)
 	if text != edited || unconfirmed {
 		t.Errorf("EffectiveFeedback = (%q, unconfirmed=%v), want the signed-off text marked confirmed", text, unconfirmed)
 	}
@@ -321,7 +325,7 @@ func TestFinalizePreservesDraft(t *testing.T) {
 		t.Fatalf("unfinalize: %v", err)
 	}
 	reloaded, _ = env.Repos.Questions.GetByID(ctx, q.ID)
-	if reloaded.ReviewStatus != domain.ReviewAIDrafted {
+	if reloaded.ReviewStatus != model.ReviewAIDrafted {
 		t.Errorf("status after reopening = %s, want ai_drafted", reloaded.ReviewStatus)
 	}
 	if reloaded.AssessorFeedbackFinal != edited {
@@ -374,7 +378,7 @@ func TestReReviewPreservesHistoryAndSignOff(t *testing.T) {
 	if len(history) != 2 {
 		t.Fatalf("got %d results in history, want 2 - a re-review must not overwrite the first", len(history))
 	}
-	runs := map[int64]bool{}
+	runs := map[uuid.UUID]bool{}
 	for _, h := range history {
 		runs[h.RunID] = true
 	}
@@ -386,7 +390,7 @@ func TestReReviewPreservesHistoryAndSignOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded.ReviewStatus != domain.ReviewFinalized {
+	if reloaded.ReviewStatus != model.ReviewFinalized {
 		t.Errorf("a second review reopened signed-off work: status = %s", reloaded.ReviewStatus)
 	}
 	if reloaded.AssessorFeedbackFinal != signedOff {
@@ -464,7 +468,7 @@ func TestReviewRefusedBeforeMapping(t *testing.T) {
 	env.truncateAll(t)
 	ctx := context.Background()
 
-	vendor := &domain.Vendor{Name: "Unmapped Ltd"}
+	vendor := &model.Vendor{Name: "Unmapped Ltd"}
 	if err := env.Assess.CreateVendor(ctx, vendor); err != nil {
 		t.Fatalf("create vendor: %v", err)
 	}
@@ -477,7 +481,7 @@ func TestReviewRefusedBeforeMapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("a review was allowed on an unmapped assessment")
 	}
-	if !errors.Is(err, domain.ErrInvalidInput) {
+	if !errors.Is(err, helper.ErrInvalidInput) {
 		t.Errorf("error = %v, want invalid input", err)
 	}
 	if !strings.Contains(err.Error(), "Map the questionnaire first") {
@@ -518,7 +522,7 @@ func TestRemappingClearsStaleResults(t *testing.T) {
 		t.Errorf("got %d questions after re-mapping, want 5", len(fresh))
 	}
 	for _, q := range fresh {
-		if q.ReviewStatus != domain.ReviewPending {
+		if q.ReviewStatus != model.ReviewPending {
 			t.Errorf("re-ingested question is %s, want pending", q.ReviewStatus)
 		}
 	}
@@ -532,7 +536,7 @@ func TestRubricAttachAndDetach(t *testing.T) {
 
 	assessmentID := mustIngest(t, env)
 
-	rubric := &domain.Rubric{
+	rubric := &model.Rubric{
 		Name:     "Vendor Security Policy v3",
 		Content:  strings.Repeat("Encryption at rest must be AES-256 or stronger.\n", 5),
 		Reusable: true,
@@ -540,7 +544,7 @@ func TestRubricAttachAndDetach(t *testing.T) {
 	if err := env.Assess.AttachRubric(ctx, assessmentID, rubric); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	if rubric.ID == 0 {
+	if rubric.ID == uuid.Nil {
 		t.Fatal("the rubric was not assigned an id")
 	}
 
@@ -553,8 +557,8 @@ func TestRubricAttachAndDetach(t *testing.T) {
 	}
 
 	// The excerpt must be bounded so a long policy cannot blow the context.
-	if len([]rune(got.Excerpt(50))) > 70 {
-		t.Errorf("Excerpt(50) returned %d runes, want it bounded", len([]rune(got.Excerpt(50))))
+	if len([]rune(helper.RubricExcerpt(got, 50))) > 70 {
+		t.Errorf("Excerpt(50) returned %d runes, want it bounded", len([]rune(helper.RubricExcerpt(got, 50))))
 	}
 
 	// A queued job records which rubric it will use.
@@ -569,7 +573,7 @@ func TestRubricAttachAndDetach(t *testing.T) {
 	if err := env.Assess.DetachRubric(ctx, assessmentID); err != nil {
 		t.Fatalf("detach: %v", err)
 	}
-	if _, err := env.Assess.GetRubric(ctx, assessmentID); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := env.Assess.GetRubric(ctx, assessmentID); !errors.Is(err, helper.ErrNotFound) {
 		t.Errorf("after detaching, GetRubric error = %v, want not found", err)
 	}
 	// A reusable rubric survives detaching.
@@ -598,14 +602,14 @@ func TestJobQueueClaimsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	if first.Status != domain.JobRunning {
+	if first.Status != model.JobRunning {
 		t.Errorf("claimed job status = %s, want running", first.Status)
 	}
 	if first.StartedAt == nil {
 		t.Error("claiming did not stamp started_at")
 	}
 
-	if _, err := env.Repos.Jobs.ClaimNext(ctx); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := env.Repos.Jobs.ClaimNext(ctx); !errors.Is(err, helper.ErrNotFound) {
 		t.Errorf("second claim error = %v, want not found - a job must be claimed once", err)
 	}
 
@@ -619,15 +623,15 @@ func TestJobQueueClaimsOnce(t *testing.T) {
 	if reloaded.DoneQuestions != 3 || reloaded.FailedQuestions != 1 {
 		t.Errorf("progress = %d done / %d failed, want 3/1", reloaded.DoneQuestions, reloaded.FailedQuestions)
 	}
-	if reloaded.Percent() != 60 {
-		t.Errorf("Percent() = %d, want 60", reloaded.Percent())
+	if helper.JobPercent(reloaded) != 60 {
+		t.Errorf("Percent() = %d, want 60", helper.JobPercent(reloaded))
 	}
 
-	if err := env.Repos.Jobs.Finish(ctx, first.ID, domain.JobSucceeded, ""); err != nil {
+	if err := env.Repos.Jobs.Finish(ctx, first.ID, model.JobSucceeded, ""); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
 	reloaded, _ = env.Repos.Jobs.GetByID(ctx, first.ID)
-	if !reloaded.Status.Terminal() || reloaded.FinishedAt == nil {
+	if !helper.TerminalJob(reloaded.Status) || reloaded.FinishedAt == nil {
 		t.Error("finishing did not record a terminal state")
 	}
 }
@@ -662,7 +666,7 @@ func TestStalledJobIsReclaimed(t *testing.T) {
 		t.Fatalf("reclaimed %d jobs, want 1", n)
 	}
 	reloaded, _ := env.Repos.Jobs.GetByID(ctx, claimed.ID)
-	if reloaded.Status != domain.JobQueued {
+	if reloaded.Status != model.JobQueued {
 		t.Errorf("reclaimed job status = %s, want queued", reloaded.Status)
 	}
 	// And it must be claimable again.
@@ -679,7 +683,7 @@ func TestTransactionRollsBackOnError(t *testing.T) {
 
 	sentinel := errors.New("deliberate failure")
 	err := env.Repos.Tx.RunInTx(ctx, func(ctx context.Context) error {
-		if err := env.Repos.Vendors.Create(ctx, &domain.Vendor{Name: "Rollback Ltd"}); err != nil {
+		if err := env.Repos.Vendors.Create(ctx, &model.Vendor{Name: "Rollback Ltd"}); err != nil {
 			return err
 		}
 		return sentinel
@@ -703,15 +707,15 @@ func TestDuplicateVendorNameIsRejected(t *testing.T) {
 	env.truncateAll(t)
 	ctx := context.Background()
 
-	if err := env.Assess.CreateVendor(ctx, &domain.Vendor{Name: "Acme Corp"}); err != nil {
+	if err := env.Assess.CreateVendor(ctx, &model.Vendor{Name: "Acme Corp"}); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 	// Case-insensitive: the index is on lower(name).
-	err := env.Assess.CreateVendor(ctx, &domain.Vendor{Name: "ACME CORP"})
+	err := env.Assess.CreateVendor(ctx, &model.Vendor{Name: "ACME CORP"})
 	if err == nil {
 		t.Fatal("a duplicate vendor name was accepted")
 	}
-	var ve domain.ValidationError
+	var ve helper.ValidationError
 	if !errors.As(err, &ve) || ve.Field != "name" {
 		t.Errorf("error = %v, want a field-level validation error on name", err)
 	}
@@ -762,7 +766,7 @@ func TestCascadeDeleteRemovesEverything(t *testing.T) {
 // runJob mirrors what the background worker does: run the job, then record its
 // terminal state. Tests go through this rather than calling Run directly so
 // they exercise the same job lifecycle production does.
-func runJob(t *testing.T, env *testEnv, job *domain.ReviewJob) error {
+func runJob(t *testing.T, env *testEnv, job *model.ReviewJob) error {
 	t.Helper()
 	ctx := context.Background()
 	runErr := env.Review.Run(ctx, job)
@@ -772,11 +776,11 @@ func runJob(t *testing.T, env *testEnv, job *domain.ReviewJob) error {
 	return runErr
 }
 
-func mustIngest(t *testing.T, env *testEnv) int64 {
+func mustIngest(t *testing.T, env *testEnv) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 
-	vendor := &domain.Vendor{Name: "Acme Corp"}
+	vendor := &model.Vendor{Name: "Acme Corp"}
 	if err := env.Assess.CreateVendor(ctx, vendor); err != nil {
 		t.Fatalf("create vendor: %v", err)
 	}
@@ -795,7 +799,7 @@ func mustIngest(t *testing.T, env *testEnv) int64 {
 	return a.ID
 }
 
-func mustIngestAndReview(t *testing.T, env *testEnv) []*domain.Question {
+func mustIngestAndReview(t *testing.T, env *testEnv) []*model.Question {
 	t.Helper()
 	ctx := context.Background()
 
@@ -830,7 +834,7 @@ func TestListPopulatesRiskColumn(t *testing.T) {
 	assessmentID := questions[0].AssessmentID
 
 	// A second assessment that has been uploaded but never reviewed.
-	vendor := &domain.Vendor{Name: "Unreviewed Ltd"}
+	vendor := &model.Vendor{Name: "Unreviewed Ltd"}
 	if err := env.Assess.CreateVendor(ctx, vendor); err != nil {
 		t.Fatalf("create vendor: %v", err)
 	}
@@ -839,7 +843,7 @@ func TestListPopulatesRiskColumn(t *testing.T) {
 		t.Fatalf("upload: %v", err)
 	}
 
-	items, _, err := env.Assess.ListAssessments(ctx, domain.AssessmentFilter{})
+	items, _, err := env.Assess.ListAssessments(ctx, dto.AssessmentFilter{})
 	if err != nil {
 		t.Fatalf("ListAssessments: %v", err)
 	}
@@ -847,7 +851,7 @@ func TestListPopulatesRiskColumn(t *testing.T) {
 		t.Fatalf("got %d assessments, want 2", len(items))
 	}
 
-	var reviewed, unreviewed *domain.Assessment
+	var reviewed, unreviewed *model.Assessment
 	for _, a := range items {
 		if a.ID == assessmentID {
 			reviewed = a

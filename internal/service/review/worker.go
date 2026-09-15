@@ -7,7 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+	"third-party-review/internal/repository"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -30,7 +34,7 @@ const (
 // and the queue table plus SKIP LOCKED already gives at-most-once claiming.
 type Worker struct {
 	svc  *Service
-	jobs domain.JobRepository
+	jobs repository.ReviewJobRepository
 	log  *slog.Logger
 	n    int
 
@@ -39,7 +43,7 @@ type Worker struct {
 
 // NewWorker constructs the background worker. n is the number of concurrent
 // review runs.
-func NewWorker(svc *Service, jobs domain.JobRepository, n int, log *slog.Logger) *Worker {
+func NewWorker(svc *Service, jobs repository.ReviewJobRepository, n int, log *slog.Logger) *Worker {
 	if n < 1 {
 		n = 1
 	}
@@ -102,7 +106,7 @@ func (w *Worker) loop(ctx context.Context, id int) {
 // whether a job was claimed.
 func (w *Worker) claimAndRun(ctx context.Context) (bool, error) {
 	job, err := w.jobs.ClaimNext(ctx)
-	if errors.Is(err, domain.ErrNotFound) {
+	if errors.Is(err, helper.ErrNotFound) {
 		return false, nil
 	}
 	if err != nil {
@@ -119,7 +123,7 @@ func (w *Worker) claimAndRun(ctx context.Context) (bool, error) {
 // runJob executes one job with a heartbeat and a timeout, and records the
 // outcome. A panic inside a review is contained here: it fails that job rather
 // than taking the process down mid-assessment.
-func (w *Worker) runJob(ctx context.Context, job *domain.ReviewJob) {
+func (w *Worker) runJob(ctx context.Context, job *model.ReviewJob) {
 	runCtx, cancel := context.WithTimeout(ctx, jobTimeout)
 	defer cancel()
 
@@ -153,7 +157,7 @@ func (w *Worker) runJob(ctx context.Context, job *domain.ReviewJob) {
 
 // startHeartbeat keeps the job's heartbeat fresh while it runs, so the stalled
 // reclaimer can tell a long review from a dead worker.
-func (w *Worker) startHeartbeat(ctx context.Context, jobID int64) func() {
+func (w *Worker) startHeartbeat(ctx context.Context, jobID uuid.UUID) func() {
 	done := make(chan struct{})
 	var once sync.Once
 

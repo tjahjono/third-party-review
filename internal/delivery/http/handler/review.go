@@ -6,17 +6,20 @@ import (
 	"strings"
 
 	"third-party-review/internal/delivery/http/middleware"
-	"third-party-review/internal/domain"
-	"third-party-review/internal/service/assessment"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 type resultsView struct {
-	Assessment *domain.Assessment
-	Questions  []*domain.Question
-	Domains    []*domain.AssessmentDomain
-	Summary    *domain.AssessmentSummary
-	Job        *domain.ReviewJob
-	Rubric     *domain.Rubric
+	Assessment *model.Assessment
+	Questions  []*model.Question
+	Domains    []*model.AssessmentDomain
+	Summary    *model.AssessmentSummary
+	Job        *model.ReviewJob
+	Rubric     *model.Rubric
 	// Filter state, so the view keeps the user's narrowing across swaps.
 	FilterDomain string
 	FilterStatus string
@@ -26,14 +29,14 @@ type resultsView struct {
 	Polling bool
 
 	// Progress is the human sign-off state shown in the header bar.
-	Progress assessment.SignOffProgress
+	Progress dto.SignOffProgress
 	// BulkResult is set after a bulk sign-off so the outcome can be reported.
-	BulkResult *assessment.BulkFinalizeResult
+	BulkResult *dto.BulkFinalizeResult
 	// Closed disables every editing control once the assessment is the signed
 	// record.
 	Closed bool
 	// User is the signed-in reviewer, for attribution in the UI.
-	User *domain.User
+	User *model.User
 	// CSRFToken is embedded in every mutating form.
 	CSRFToken string
 }
@@ -41,7 +44,7 @@ type resultsView struct {
 // AssessmentDetail renders the assessment page: progress, summary and the
 // per-question results.
 func (h *Handler) AssessmentDetail(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -61,7 +64,7 @@ func (h *Handler) AssessmentDetail(w http.ResponseWriter, r *http.Request) {
 
 // QuestionList swaps just the filtered question list.
 func (h *Handler) QuestionList(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -75,43 +78,43 @@ func (h *Handler) QuestionList(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildResultsView assembles everything the assessment page needs.
-func (h *Handler) buildResultsView(r *http.Request, id int64) (*resultsView, error) {
+func (h *Handler) buildResultsView(r *http.Request, id uuid.UUID) (*resultsView, error) {
 	ctx := r.Context()
 
-	a, err := h.Assessments.GetAssessment(ctx, id)
+	a, err := h.assessments.GetAssessment(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	domains, err := h.Assessments.ListDomains(ctx)
+	domains, err := h.assessments.ListDomains(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	f := domain.QuestionFilter{AssessmentID: id}
+	f := dto.QuestionFilter{AssessmentID: id}
 	q := r.URL.Query()
 
 	filterDomain := strings.TrimSpace(q.Get("domain"))
 	if filterDomain != "" {
-		if v, ok := parseInt64(filterDomain); ok {
+		if v, ok := parseUUID(filterDomain); ok {
 			f.DomainID = &v
 		}
 	}
 	filterStatus := strings.TrimSpace(q.Get("review_status"))
 	if filterStatus != "" {
-		s := domain.ReviewStatus(filterStatus)
-		if s.Valid() {
+		s := model.ReviewStatus(filterStatus)
+		if helper.ValidReviewStatus(s) {
 			f.ReviewStatus = &s
 		}
 	}
 	flaggedOnly := q.Get("flagged") == "1"
 	f.FlaggedOnly = flaggedOnly
 
-	questions, err := h.Assessments.ListQuestions(ctx, f)
+	questions, err := h.assessments.ListQuestions(ctx, f)
 	if err != nil {
 		return nil, err
 	}
 
-	progress, err := h.Assessments.Progress(ctx, id)
+	progress, err := h.assessments.Progress(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -125,23 +128,23 @@ func (h *Handler) buildResultsView(r *http.Request, id int64) (*resultsView, err
 		FilterStatus: filterStatus,
 		FlaggedOnly:  flaggedOnly,
 		Progress:     progress,
-		Closed:       a.Status == domain.StatusClosed,
+		Closed:       a.Status == model.StatusClosed,
 		User:         middleware.UserFrom(ctx),
 		CSRFToken:    middleware.CSRFTokenFrom(ctx),
 	}
 
-	if job, err := h.Reviews.Status(ctx, id); err == nil {
+	if job, err := h.reviews.Status(ctx, id); err == nil {
 		view.Job = job
 		// If a run is still in flight, the page must resume polling on load -
 		// otherwise a reload during a review leaves a frozen progress bar.
-		view.Polling = !job.Status.Terminal()
-	} else if !errors.Is(err, domain.ErrNotFound) {
+		view.Polling = !helper.TerminalJob(job.Status)
+	} else if !errors.Is(err, helper.ErrNotFound) {
 		return nil, err
 	}
 
-	if rubric, err := h.Assessments.GetRubric(ctx, id); err == nil {
+	if rubric, err := h.assessments.GetRubric(ctx, id); err == nil {
 		view.Rubric = rubric
-	} else if !errors.Is(err, domain.ErrNotFound) {
+	} else if !errors.Is(err, helper.ErrNotFound) {
 		return nil, err
 	}
 	return view, nil
@@ -149,12 +152,12 @@ func (h *Handler) buildResultsView(r *http.Request, id int64) (*resultsView, err
 
 // StartReview queues a background AI review and swaps in the progress panel.
 func (h *Handler) StartReview(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	job, err := h.Reviews.Enqueue(r.Context(), id)
+	job, err := h.reviews.Enqueue(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -167,8 +170,8 @@ func (h *Handler) StartReview(w http.ResponseWriter, r *http.Request) {
 }
 
 type reviewStatusView struct {
-	AssessmentID int64
-	Job          *domain.ReviewJob
+	AssessmentID uuid.UUID
+	Job          *model.ReviewJob
 	// Polling tells the template to keep the HTMX poll trigger attached. It is
 	// switched off on a terminal status so the browser stops polling instead
 	// of hammering the endpoint forever.
@@ -180,14 +183,14 @@ type reviewStatusView struct {
 // ReviewStatus is the HTMX poll target. It returns the progress panel and,
 // once the run finishes, stops the poll and asks the page to refresh.
 func (h *Handler) ReviewStatus(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	job, err := h.Reviews.Status(r.Context(), id)
+	job, err := h.reviews.Status(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, helper.ErrNotFound) {
 			h.renderPartial(w, r, http.StatusOK, "review_status", reviewStatusView{AssessmentID: id})
 			return
 		}
@@ -198,8 +201,8 @@ func (h *Handler) ReviewStatus(w http.ResponseWriter, r *http.Request) {
 	view := reviewStatusView{
 		AssessmentID: id,
 		Job:          job,
-		Polling:      !job.Status.Terminal(),
-		Finished:     job.Status == domain.JobSucceeded,
+		Polling:      !helper.TerminalJob(job.Status),
+		Finished:     job.Status == model.JobSucceeded,
 	}
 	h.renderPartial(w, r, http.StatusOK, "review_status", view)
 }

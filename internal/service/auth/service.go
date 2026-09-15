@@ -16,9 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+	"third-party-review/internal/repository"
 	"third-party-review/pkg/totp"
 )
 
@@ -49,40 +53,54 @@ var ErrMFARequired = errors.New("mfa required")
 // ErrInvalidMFACode is returned for a wrong or reused authenticator code.
 var ErrInvalidMFACode = errors.New("invalid authenticator code")
 
-// Service implements authentication.
+// Step 3 - Implement the Struct and its Methods.
 type Service struct {
-	users      domain.UserRepository
-	sessions   domain.SessionRepository
-	sessionTTL time.Duration
-	log        *slog.Logger
+	users         repository.UserRepository
+	sessions      repository.SessionRepository
+	recoveryCodes repository.RecoveryCodeRepository
+	sessionTTL    time.Duration
+	log           *slog.Logger
 }
 
-// New constructs the auth service.
-func New(users domain.UserRepository, sessions domain.SessionRepository, sessionTTL time.Duration, log *slog.Logger) *Service {
-	if sessionTTL <= 0 {
-		sessionTTL = 12 * time.Hour
+// Step 4 - Constructor ensuring the dependency is injected.
+func New(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
-	return &Service{users: users, sessions: sessions, sessionTTL: sessionTTL, log: log}
+	ttl := deps.SessionTTL
+	if ttl <= 0 {
+		ttl = defaultSessionTTL
+	}
+	return &Service{
+		users:         deps.Users,
+		sessions:      deps.Sessions,
+		recoveryCodes: deps.RecoveryCodes,
+		sessionTTL:    ttl,
+		log:           deps.Log,
+	}, nil
 }
 
-// LoginResult describes what the caller should do next.
-type LoginResult struct {
-	Session *domain.Session
-	User    *domain.User
-	// MFARequired means the session exists but is pending: it authorises
-	// nothing until a TOTP code is verified.
-	MFARequired bool
+// MustNew is New for wiring that cannot meaningfully recover.
+func MustNew(deps Deps) *Service {
+	s, err := New(deps)
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
+
+// defaultSessionTTL applies when none is configured.
+const defaultSessionTTL = 12 * time.Hour
 
 // Login verifies a username and password and opens a session. When the account
 // has MFA enabled the session is created in the pending state and
 // MFARequired is set.
-func (s *Service) Login(ctx context.Context, username, password, userAgent, ip string) (*LoginResult, error) {
+func (s *Service) Login(ctx context.Context, username, password, userAgent, ip string) (*dto.LoginResult, error) {
 	username = strings.TrimSpace(username)
 
 	user, err := s.users.GetByUsername(ctx, username)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, helper.ErrNotFound) {
 			// Hash anyway. Returning early on an unknown username makes login
 			// measurably faster for names that do not exist, which enumerates
 			// the user list for anyone timing it.
@@ -107,19 +125,19 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	}
 
 	if user.MFAEnabled {
-		return &LoginResult{Session: session, User: user, MFARequired: true}, nil
+		return &dto.LoginResult{Session: session, User: user, MFARequired: true}, nil
 	}
 
 	if err := s.users.RecordLogin(ctx, user.ID, time.Now().UTC()); err != nil {
 		s.log.Warn("could not record login time", "user_id", user.ID, "error", err)
 	}
 	s.log.Info("login", "username", user.Username, "ip", ip, "mfa", false)
-	return &LoginResult{Session: session, User: user}, nil
+	return &dto.LoginResult{Session: session, User: user}, nil
 }
 
 // VerifyMFA completes a pending login with an authenticator code or a recovery
 // code, promoting the session to full validity.
-func (s *Service) VerifyMFA(ctx context.Context, sessionID, code string) (*domain.User, error) {
+func (s *Service) VerifyMFA(ctx context.Context, sessionID, code string) (*model.User, error) {
 	session, err := s.sessions.GetByID(ctx, sessionID)
 	if err != nil {
 		return nil, ErrInvalidCredentials
@@ -167,21 +185,21 @@ func (s *Service) VerifyMFA(ctx context.Context, sessionID, code string) (*domai
 }
 
 // Authenticate resolves a session cookie to a user. It returns
-// domain.ErrNotFound for any session that is missing, expired or still
+// helper.ErrNotFound for any session that is missing, expired or still
 // pending MFA.
-func (s *Service) Authenticate(ctx context.Context, sessionID string) (*domain.User, *domain.Session, error) {
+func (s *Service) Authenticate(ctx context.Context, sessionID string) (*model.User, *model.Session, error) {
 	if sessionID == "" {
-		return nil, nil, domain.ErrNotFound
+		return nil, nil, helper.ErrNotFound
 	}
 	session, err := s.sessions.GetByID(ctx, sessionID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !session.Active(time.Now()) {
+	if !helper.SessionActive(session, time.Now()) {
 		if time.Now().After(session.ExpiresAt) {
 			_ = s.sessions.Delete(ctx, sessionID)
 		}
-		return nil, session, domain.ErrNotFound
+		return nil, session, helper.ErrNotFound
 	}
 	user, err := s.users.GetByID(ctx, session.UserID)
 	if err != nil {
@@ -192,16 +210,16 @@ func (s *Service) Authenticate(ctx context.Context, sessionID string) (*domain.U
 
 // PendingSession returns a session that has passed the password step but not
 // yet MFA, for rendering the code prompt.
-func (s *Service) PendingSession(ctx context.Context, sessionID string) (*domain.Session, error) {
+func (s *Service) PendingSession(ctx context.Context, sessionID string) (*model.Session, error) {
 	if sessionID == "" {
-		return nil, domain.ErrNotFound
+		return nil, helper.ErrNotFound
 	}
 	session, err := s.sessions.GetByID(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	if !session.MFAPending || time.Now().After(session.ExpiresAt) {
-		return nil, domain.ErrNotFound
+		return nil, helper.ErrNotFound
 	}
 	return session, nil
 }
@@ -221,12 +239,12 @@ func (s *Service) PurgeExpiredSessions(ctx context.Context) (int, error) {
 }
 
 // newSession creates a session row with a cryptographically random id.
-func (s *Service) newSession(ctx context.Context, userID int64, pending bool, ttl time.Duration, userAgent, ip string) (*domain.Session, error) {
+func (s *Service) newSession(ctx context.Context, userID uuid.UUID, pending bool, ttl time.Duration, userAgent, ip string) (*model.Session, error) {
 	id, err := randomToken(32)
 	if err != nil {
 		return nil, err
 	}
-	session := &domain.Session{
+	session := &model.Session{
 		ID:         id,
 		UserID:     userID,
 		MFAPending: pending,

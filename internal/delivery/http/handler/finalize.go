@@ -6,15 +6,18 @@ import (
 	"strconv"
 
 	"third-party-review/internal/delivery/http/middleware"
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 	"third-party-review/internal/service/assessment"
+
+	"github.com/google/uuid"
 )
 
 // questionCardView is what a single question card renders from. Cards are
 // swapped individually so signing off one finding does not re-render the
 // hundred others on the page.
 type questionCardView struct {
-	Question *domain.Question
+	Question *model.Question
 	// Editing switches the card into the inline editor.
 	Editing bool
 	// Saved shows a brief confirmation after a sign-off.
@@ -26,12 +29,12 @@ type questionCardView struct {
 
 // EditQuestion swaps one question card into its inline editor.
 func (h *Handler) EditQuestion(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "questionID")
+	id, err := pathID(r, "questionID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	q, err := h.Assessments.GetQuestion(r.Context(), id)
+	q, err := h.assessments.GetQuestion(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -49,12 +52,12 @@ func (h *Handler) EditQuestion(w http.ResponseWriter, r *http.Request) {
 // CancelEditQuestion swaps the editor back to the read-only card, discarding
 // whatever was typed.
 func (h *Handler) CancelEditQuestion(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "questionID")
+	id, err := pathID(r, "questionID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	q, err := h.Assessments.GetQuestion(r.Context(), id)
+	q, err := h.assessments.GetQuestion(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -65,18 +68,18 @@ func (h *Handler) CancelEditQuestion(w http.ResponseWriter, r *http.Request) {
 
 // FinalizeQuestion records the reviewer's sign-off and swaps the card back.
 func (h *Handler) FinalizeQuestion(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "questionID")
+	id, err := pathID(r, "questionID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 
 	userID := middleware.UserIDFrom(r.Context())
-	q, err := h.Assessments.FinalizeQuestion(r.Context(), id, r.FormValue("feedback"), userID)
+	q, err := h.assessments.FinalizeQuestion(r.Context(), id, r.FormValue("feedback"), userID)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -84,8 +87,8 @@ func (h *Handler) FinalizeQuestion(w http.ResponseWriter, r *http.Request) {
 
 	// The summary's sign-off counters are now stale, so recompute them. This
 	// is arithmetic over rows already in the database - no AI call.
-	if _, err := h.Reviews.RecomputeSummary(r.Context(), q.AssessmentID); err != nil {
-		h.Log.Warn("could not refresh the summary after sign-off",
+	if _, err := h.reviews.RecomputeSummary(r.Context(), q.AssessmentID); err != nil {
+		h.log.Warn("could not refresh the summary after sign-off",
 			"assessment_id", q.AssessmentID, "error", err)
 	}
 
@@ -96,18 +99,18 @@ func (h *Handler) FinalizeQuestion(w http.ResponseWriter, r *http.Request) {
 
 // ReopenQuestion takes a signed-off question back into the draft state.
 func (h *Handler) ReopenQuestion(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "questionID")
+	id, err := pathID(r, "questionID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	q, err := h.Assessments.ReopenQuestion(r.Context(), id)
+	q, err := h.assessments.ReopenQuestion(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if _, err := h.Reviews.RecomputeSummary(r.Context(), q.AssessmentID); err != nil {
-		h.Log.Warn("could not refresh the summary after reopening",
+	if _, err := h.reviews.RecomputeSummary(r.Context(), q.AssessmentID); err != nil {
+		h.log.Warn("could not refresh the summary after reopening",
 			"assessment_id", q.AssessmentID, "error", err)
 	}
 	w.Header().Set("HX-Trigger", "signOffChanged")
@@ -117,28 +120,28 @@ func (h *Handler) ReopenQuestion(w http.ResponseWriter, r *http.Request) {
 // BulkFinalize accepts every remaining AI draft, optionally scoped to one
 // domain, and re-renders the question list.
 func (h *Handler) BulkFinalize(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 
-	var domainID *int64
-	if v, ok := formInt64(r, "domain_id"); ok && v > 0 {
+	var domainID *uuid.UUID
+	if v, ok := formID(r, "domain_id"); ok {
 		domainID = &v
 	}
 
-	res, err := h.Assessments.BulkFinalize(r.Context(), id, domainID, middleware.UserIDFrom(r.Context()))
+	res, err := h.assessments.BulkFinalize(r.Context(), id, domainID, middleware.UserIDFrom(r.Context()))
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if _, err := h.Reviews.RecomputeSummary(r.Context(), id); err != nil {
-		h.Log.Warn("could not refresh the summary after bulk sign-off", "assessment_id", id, "error", err)
+	if _, err := h.reviews.RecomputeSummary(r.Context(), id); err != nil {
+		h.log.Warn("could not refresh the summary after bulk sign-off", "assessment_id", id, "error", err)
 	}
 
 	view, err := h.buildResultsView(r, id)
@@ -155,7 +158,7 @@ func (h *Handler) BulkFinalize(w http.ResponseWriter, r *http.Request) {
 // whenever a sign-off changes, so the header stays truthful without the page
 // re-rendering every question.
 func (h *Handler) SignOffProgress(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -170,46 +173,46 @@ func (h *Handler) SignOffProgress(w http.ResponseWriter, r *http.Request) {
 
 // CloseAssessment marks the assessment complete.
 func (h *Handler) CloseAssessment(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if err := h.Assessments.CloseAssessment(r.Context(), id); err != nil {
+	if err := h.assessments.CloseAssessment(r.Context(), id); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.redirect(w, r, "/assessments/"+itoa64(id))
+	h.redirect(w, r, "/assessments/"+uuidStr(id))
 }
 
 // ReopenAssessment takes a closed assessment back into review.
 func (h *Handler) ReopenAssessment(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if err := h.Assessments.ReopenAssessment(r.Context(), id); err != nil {
+	if err := h.assessments.ReopenAssessment(r.Context(), id); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.redirect(w, r, "/assessments/"+itoa64(id))
+	h.redirect(w, r, "/assessments/"+uuidStr(id))
 }
 
 // assessmentClosed reports whether the assessment is the signed record, in
 // which case every editing control is rendered inert.
-func (h *Handler) assessmentClosed(r *http.Request, assessmentID int64) (bool, error) {
-	a, err := h.Assessments.GetAssessment(r.Context(), assessmentID)
+func (h *Handler) assessmentClosed(r *http.Request, assessmentID uuid.UUID) (bool, error) {
+	a, err := h.assessments.GetAssessment(r.Context(), assessmentID)
 	if err != nil {
 		return false, err
 	}
-	return a.Status == domain.StatusClosed, nil
+	return a.Status == model.StatusClosed, nil
 }
 
 // SummaryPanel re-renders the summary out of band after a sign-off changes
 // the counters.
 func (h *Handler) SummaryPanel(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -224,12 +227,12 @@ func (h *Handler) SummaryPanel(w http.ResponseWriter, r *http.Request) {
 
 // ExportCSV streams the reviewed assessment as a CSV download.
 func (h *Handler) ExportCSV(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	a, err := h.Assessments.GetAssessment(r.Context(), id)
+	a, err := h.assessments.GetAssessment(r.Context(), id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -244,7 +247,7 @@ func (h *Handler) ExportCSV(w http.ResponseWriter, r *http.Request) {
 	// It is written into the buffer rather than separately so the declared
 	// Content-Length covers the whole body.
 	buf.Write([]byte{0xEF, 0xBB, 0xBF})
-	if err := h.Assessments.ExportCSV(r.Context(), id, &buf); err != nil {
+	if err := h.assessments.ExportCSV(r.Context(), id, &buf); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -254,6 +257,6 @@ func (h *Handler) ExportCSV(w http.ResponseWriter, r *http.Request) {
 		`attachment; filename="`+assessment.ExportFilename(a)+`"`)
 	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	if _, err := w.Write(buf.Bytes()); err != nil {
-		h.Log.Warn("export download was interrupted", "assessment_id", id, "error", err)
+		h.log.Warn("export download was interrupted", "assessment_id", id, "error", err)
 	}
 }

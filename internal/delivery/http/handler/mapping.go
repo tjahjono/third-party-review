@@ -5,18 +5,22 @@ import (
 	"strconv"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 	"third-party-review/internal/service/parser"
+
+	"github.com/google/uuid"
 )
 
 type mappingView struct {
-	Assessment *domain.Assessment
-	Preview    *parser.Preview
-	Domains    []*domain.AssessmentDomain
+	Assessment *model.Assessment
+	Preview    *dto.IngestPreview
+	Domains    []*model.AssessmentDomain
 	// PreviewRows is the subset of rows shown; a full questionnaire is too
 	// long to render in one screen and the user only needs enough to check
 	// the boundaries are right.
-	PreviewRows []parser.Row
+	PreviewRows []dto.SourceRow
 	Truncated   bool
 	TotalRows   int
 }
@@ -28,14 +32,14 @@ const previewRowLimit = 400
 // MappingPage renders the column-mapping and domain-boundary confirmation
 // step, pre-filled with the parser's best guesses.
 func (h *Handler) MappingPage(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	sheet := strings.TrimSpace(r.URL.Query().Get("sheet"))
 
-	a, preview, err := h.Assessments.Preview(r.Context(), id, sheet)
+	a, preview, err := h.assessments.Preview(r.Context(), id, sheet)
 	if err != nil {
 		// A parse failure still has an assessment to go back to, so it is
 		// rendered inside the page rather than as a bare error.
@@ -52,7 +56,7 @@ func (h *Handler) MappingPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domains, err := h.Assessments.ListDomains(r.Context())
+	domains, err := h.assessments.ListDomains(r.Context())
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -84,23 +88,23 @@ func (h *Handler) MappingPage(w http.ResponseWriter, r *http.Request) {
 // editing and swaps the preview back, so changing a dropdown updates the
 // detected sections immediately rather than after a commit.
 func (h *Handler) RepreviewMapping(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 
 	sheet := strings.TrimSpace(r.FormValue("sheet"))
-	a, preview, err := h.Assessments.Preview(r.Context(), id, sheet)
+	a, preview, err := h.assessments.Preview(r.Context(), id, sheet)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	domains, err := h.Assessments.ListDomains(r.Context())
+	domains, err := h.assessments.ListDomains(r.Context())
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -112,8 +116,17 @@ func (h *Handler) RepreviewMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preview.Mapping = mapping
+	// The dropdowns render from Candidates, so they have to be brought along
+	// or the user's correction is drawn back at its original guess.
+	preview.SyncCandidates(mapping)
 	preview.Rows, preview.Sections, preview.Warnings = parser.DetectSections(preview.Grid, mapping, domains)
 	preview.QuestionCount = countQuestions(preview.Rows)
+	preview.Blocker = ""
+	if _, ok := mapping.Bindings[model.FieldQuestion]; !ok {
+		preview.Blocker = "Couldn't detect a Question column - please map it manually below."
+	} else if preview.QuestionCount == 0 {
+		preview.Blocker = "No question rows were found below the header. Check the Question column is mapped to the right column."
+	}
 
 	rows := preview.Rows
 	truncated := false
@@ -134,18 +147,18 @@ func (h *Handler) RepreviewMapping(w http.ResponseWriter, r *http.Request) {
 
 // ConfirmMapping persists the confirmed mapping and ingests the questions.
 func (h *Handler) ConfirmMapping(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
 
 	sheet := strings.TrimSpace(r.FormValue("sheet"))
-	_, preview, err := h.Assessments.Preview(r.Context(), id, sheet)
+	_, preview, err := h.assessments.Preview(r.Context(), id, sheet)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -158,21 +171,21 @@ func (h *Handler) ConfirmMapping(w http.ResponseWriter, r *http.Request) {
 	}
 	overrides := domainOverridesFromForm(r)
 
-	if _, err := h.Assessments.ConfirmMapping(r.Context(), id, mapping, overrides, sheet); err != nil {
+	if _, err := h.assessments.ConfirmMapping(r.Context(), id, mapping, overrides, sheet); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.redirect(w, r, "/assessments/"+itoa64(id))
+	h.redirect(w, r, "/assessments/"+uuidStr(id))
 }
 
 // mappingFromForm reads the per-column dropdowns into a ColumnMapping. The
 // form posts one `col_<index>` value per source column naming the field it
 // supplies, or "" to ignore the column.
-func mappingFromForm(r *http.Request, preview *parser.Preview) (*domain.ColumnMapping, error) {
-	m := &domain.ColumnMapping{
+func mappingFromForm(r *http.Request, preview *dto.IngestPreview) (*model.ColumnMapping, error) {
+	m := &model.ColumnMapping{
 		SheetName: preview.Grid.SheetName,
 		HeaderRow: preview.HeaderRow,
-		Bindings:  map[domain.QuestionField]domain.ColumnBinding{},
+		Bindings:  map[model.QuestionField]model.ColumnBinding{},
 	}
 	if hr := strings.TrimSpace(r.FormValue("header_row")); hr != "" {
 		if v, err := strconv.Atoi(hr); err == nil && v >= 0 {
@@ -180,8 +193,8 @@ func mappingFromForm(r *http.Request, preview *parser.Preview) (*domain.ColumnMa
 		}
 	}
 
-	var errs domain.ValidationErrors
-	seen := map[domain.QuestionField]int{}
+	var errs helper.ValidationErrors
+	seen := map[model.QuestionField]int{}
 
 	for i := 0; i < preview.Grid.Width(); i++ {
 		raw := strings.TrimSpace(r.FormValue("col_" + strconv.Itoa(i)))
@@ -192,8 +205,8 @@ func mappingFromForm(r *http.Request, preview *parser.Preview) (*domain.ColumnMa
 			}
 			continue
 		}
-		field := domain.QuestionField(raw)
-		if _, known := domain.TemplateFieldByName(field); !known {
+		field := model.QuestionField(raw)
+		if _, known := dto.TemplateFieldByName(field); !known {
 			errs.Add("col_"+strconv.Itoa(i), "Unknown field "+raw+".")
 			continue
 		}
@@ -212,7 +225,7 @@ func mappingFromForm(r *http.Request, preview *parser.Preview) (*domain.ColumnMa
 		if b, ok := preview.Mapping.Bindings[field]; ok && b.Index == i {
 			confidence, manual = b.Confidence, b.Manual
 		}
-		m.Bindings[field] = domain.ColumnBinding{
+		m.Bindings[field] = model.ColumnBinding{
 			Field: field, Index: i, Header: header,
 			Confidence: confidence, Manual: manual,
 		}
@@ -225,8 +238,8 @@ func mappingFromForm(r *http.Request, preview *parser.Preview) (*domain.ColumnMa
 
 // domainOverridesFromForm reads per-row domain corrections, posted as
 // `row_<sourceRowIndex>` with the chosen domain ID.
-func domainOverridesFromForm(r *http.Request) map[int]int64 {
-	overrides := map[int]int64{}
+func domainOverridesFromForm(r *http.Request) map[int]uuid.UUID {
+	overrides := map[int]uuid.UUID{}
 	for key, values := range r.Form {
 		if !strings.HasPrefix(key, "row_") || len(values) == 0 {
 			continue
@@ -235,8 +248,8 @@ func domainOverridesFromForm(r *http.Request) map[int]int64 {
 		if err != nil {
 			continue
 		}
-		domainID, err := strconv.ParseInt(strings.TrimSpace(values[0]), 10, 64)
-		if err != nil || domainID <= 0 {
+		domainID, err := uuid.Parse(strings.TrimSpace(values[0]))
+		if err != nil || domainID == uuid.Nil {
 			continue
 		}
 		overrides[rowIdx] = domainID
@@ -244,10 +257,10 @@ func domainOverridesFromForm(r *http.Request) map[int]int64 {
 	return overrides
 }
 
-func countQuestions(rows []parser.Row) int {
+func countQuestions(rows []dto.SourceRow) int {
 	n := 0
 	for _, r := range rows {
-		if r.Kind == parser.RowQuestion {
+		if r.Kind == dto.RowQuestion {
 			n++
 		}
 	}

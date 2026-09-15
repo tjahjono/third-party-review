@@ -133,7 +133,7 @@
                   <select class="form-select form-select-sm" name="row_{{ .Index }}">
                     {{ $current := .DomainID }}
                     {{ range $.Domains }}
-                    <option value="{{ .ID }}" {{ if eq $current .ID }}selected{{ end }}>{{ .Name }}</option>
+                    <option value="{{ .ID }}" {{ if sameID $current .ID }}selected{{ end }}>{{ .Name }}</option>
                     {{ end }}
                   </select>
                 </td>

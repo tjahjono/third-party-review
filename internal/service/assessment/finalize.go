@@ -5,7 +5,11 @@ import (
 	"strings"
 	"time"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 // This file holds the human-in-the-loop half of the workflow: everything that
@@ -17,12 +21,12 @@ import (
 
 // GetQuestion returns one question with its latest AI result attached, for the
 // inline editor.
-func (s *Service) GetQuestion(ctx context.Context, questionID int64) (*domain.Question, error) {
-	q, err := s.repos.Questions.GetByID(ctx, questionID)
+func (s *Service) GetQuestion(ctx context.Context, questionID uuid.UUID) (*model.Question, error) {
+	q, err := s.questions.GetByID(ctx, questionID)
 	if err != nil {
 		return nil, err
 	}
-	results, err := s.repos.Results.LatestByAssessment(ctx, q.AssessmentID, nil)
+	results, err := s.results.LatestByAssessment(ctx, q.AssessmentID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -35,16 +39,16 @@ func (s *Service) GetQuestion(ctx context.Context, questionID int64) (*domain.Qu
 // FinalizeQuestion records the human-signed-off feedback for one question. The
 // text passed in is whatever the reviewer had in the editor: the AI draft
 // unchanged, or their edit of it.
-func (s *Service) FinalizeQuestion(ctx context.Context, questionID int64, feedback string, userID *int64) (*domain.Question, error) {
+func (s *Service) FinalizeQuestion(ctx context.Context, questionID uuid.UUID, feedback string, userID *uuid.UUID) (*model.Question, error) {
 	feedback = strings.TrimSpace(feedback)
 	if feedback == "" {
-		return nil, domain.ValidationError{
+		return nil, helper.ValidationError{
 			Field:   "feedback",
 			Message: "Feedback can't be empty. Write what the vendor needs to address, or reopen the question instead.",
 		}
 	}
 
-	q, err := s.repos.Questions.GetByID(ctx, questionID)
+	q, err := s.questions.GetByID(ctx, questionID)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +56,7 @@ func (s *Service) FinalizeQuestion(ctx context.Context, questionID int64, feedba
 		return nil, err
 	}
 
-	if err := s.repos.Questions.Finalize(ctx, questionID, feedback, userID, time.Now().UTC()); err != nil {
+	if err := s.questions.Finalize(ctx, questionID, feedback, userID, time.Now().UTC()); err != nil {
 		return nil, err
 	}
 	return s.GetQuestion(ctx, questionID)
@@ -61,28 +65,18 @@ func (s *Service) FinalizeQuestion(ctx context.Context, questionID int64, feedba
 // ReopenQuestion takes a question back out of the finalized state so it can be
 // edited again. The signed-off text is kept, so an accidental reopen costs
 // nothing.
-func (s *Service) ReopenQuestion(ctx context.Context, questionID int64) (*domain.Question, error) {
-	q, err := s.repos.Questions.GetByID(ctx, questionID)
+func (s *Service) ReopenQuestion(ctx context.Context, questionID uuid.UUID) (*model.Question, error) {
+	q, err := s.questions.GetByID(ctx, questionID)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.assessmentIsOpen(ctx, q.AssessmentID); err != nil {
 		return nil, err
 	}
-	if err := s.repos.Questions.Unfinalize(ctx, questionID); err != nil {
+	if err := s.questions.Unfinalize(ctx, questionID); err != nil {
 		return nil, err
 	}
 	return s.GetQuestion(ctx, questionID)
-}
-
-// BulkFinalizeResult reports what a bulk sign-off actually did.
-type BulkFinalizeResult struct {
-	Finalized int
-	// Skipped counts questions passed over because they had no draft to sign
-	// off. Accepting a blank draft would put an empty finding into the record.
-	Skipped int
-	// AlreadyFinal counts questions a human had already signed.
-	AlreadyFinal int
 }
 
 // BulkFinalize signs off every not-yet-finalized question in an assessment, or
@@ -92,14 +86,14 @@ type BulkFinalizeResult struct {
 // through a domain. It deliberately only accepts drafts as written - anything
 // a reviewer wants to change still goes through the inline editor - and it
 // refuses to sign off a question the AI left without a draft.
-func (s *Service) BulkFinalize(ctx context.Context, assessmentID int64, domainID *int64, userID *int64) (BulkFinalizeResult, error) {
-	var out BulkFinalizeResult
+func (s *Service) BulkFinalize(ctx context.Context, assessmentID uuid.UUID, domainID *uuid.UUID, userID *uuid.UUID) (dto.BulkFinalizeResult, error) {
+	var out dto.BulkFinalizeResult
 
 	if err := s.assessmentIsOpen(ctx, assessmentID); err != nil {
 		return out, err
 	}
 
-	questions, err := s.repos.Questions.List(ctx, domain.QuestionFilter{
+	questions, err := s.questions.List(ctx, dto.QuestionFilter{
 		AssessmentID: assessmentID,
 		DomainID:     domainID,
 	})
@@ -108,9 +102,9 @@ func (s *Service) BulkFinalize(ctx context.Context, assessmentID int64, domainID
 	}
 
 	now := time.Now().UTC()
-	err = s.repos.Tx.RunInTx(ctx, func(ctx context.Context) error {
+	err = s.tx.RunInTx(ctx, func(ctx context.Context) error {
 		for _, q := range questions {
-			if q.ReviewStatus == domain.ReviewFinalized {
+			if q.ReviewStatus == model.ReviewFinalized {
 				out.AlreadyFinal++
 				continue
 			}
@@ -119,7 +113,7 @@ func (s *Service) BulkFinalize(ctx context.Context, assessmentID int64, domainID
 				out.Skipped++
 				continue
 			}
-			if err := s.repos.Questions.Finalize(ctx, q.ID, draft, userID, now); err != nil {
+			if err := s.questions.Finalize(ctx, q.ID, draft, userID, now); err != nil {
 				return err
 			}
 			out.Finalized++
@@ -127,7 +121,7 @@ func (s *Service) BulkFinalize(ctx context.Context, assessmentID int64, domainID
 		return nil
 	})
 	if err != nil {
-		return BulkFinalizeResult{}, err
+		return dto.BulkFinalizeResult{}, err
 	}
 
 	s.log.Info("bulk sign-off",
@@ -140,16 +134,16 @@ func (s *Service) BulkFinalize(ctx context.Context, assessmentID int64, domainID
 // still unsigned: closing is the point at which the assessment becomes the
 // record, and a record with unreviewed AI drafts in it is not one anybody
 // should be relying on.
-func (s *Service) CloseAssessment(ctx context.Context, assessmentID int64) error {
-	a, err := s.repos.Assessments.GetByID(ctx, assessmentID)
+func (s *Service) CloseAssessment(ctx context.Context, assessmentID uuid.UUID) error {
+	a, err := s.assessments.GetByID(ctx, assessmentID)
 	if err != nil {
 		return err
 	}
-	if a.Status == domain.StatusClosed {
+	if a.Status == model.StatusClosed {
 		return nil
 	}
-	if a.Status == domain.StatusReviewing {
-		return domain.ValidationError{
+	if a.Status == model.StatusReviewing {
+		return helper.ValidationError{
 			Field:   "status",
 			Message: "An AI review is still running. Wait for it to finish before closing.",
 		}
@@ -160,7 +154,7 @@ func (s *Service) CloseAssessment(ctx context.Context, assessmentID int64) error
 		return err
 	}
 	if pending > 0 {
-		return domain.ValidationError{
+		return helper.ValidationError{
 			Field: "status",
 			Message: plural(pending,
 				"1 question still needs your sign-off before this assessment can be closed.",
@@ -170,39 +164,39 @@ func (s *Service) CloseAssessment(ctx context.Context, assessmentID int64) error
 
 	// The original upload has served its purpose once the assessment is
 	// closed; the confirmed mapping and the questions remain as the record.
-	if err := s.repos.Assessments.DiscardUpload(ctx, assessmentID); err != nil {
+	if err := s.uploads.Discard(ctx, assessmentID); err != nil {
 		s.log.Warn("could not discard the stored upload", "assessment_id", assessmentID, "error", err)
 	}
-	return s.repos.Assessments.SetStatus(ctx, assessmentID, domain.StatusClosed, time.Now().UTC())
+	return s.assessments.SetStatus(ctx, assessmentID, model.StatusClosed, time.Now().UTC())
 }
 
 // ReopenAssessment moves a closed assessment back to reviewed so further work
 // can be done on it.
-func (s *Service) ReopenAssessment(ctx context.Context, assessmentID int64) error {
-	a, err := s.repos.Assessments.GetByID(ctx, assessmentID)
+func (s *Service) ReopenAssessment(ctx context.Context, assessmentID uuid.UUID) error {
+	a, err := s.assessments.GetByID(ctx, assessmentID)
 	if err != nil {
 		return err
 	}
-	if a.Status != domain.StatusClosed {
-		return domain.ValidationError{Field: "status", Message: "That assessment is not closed."}
+	if a.Status != model.StatusClosed {
+		return helper.ValidationError{Field: "status", Message: "That assessment is not closed."}
 	}
-	target := domain.StatusReviewed
+	target := model.StatusReviewed
 	if a.CurrentRunID == nil {
-		target = domain.StatusMapped
+		target = model.StatusMapped
 	}
-	return s.repos.Assessments.SetStatus(ctx, assessmentID, target, time.Now().UTC())
+	return s.assessments.SetStatus(ctx, assessmentID, target, time.Now().UTC())
 }
 
 // assessmentIsOpen refuses edits to a closed assessment. A closed assessment is
 // the signed record; changing it silently would undermine the point of having
 // signed it.
-func (s *Service) assessmentIsOpen(ctx context.Context, assessmentID int64) error {
-	a, err := s.repos.Assessments.GetByID(ctx, assessmentID)
+func (s *Service) assessmentIsOpen(ctx context.Context, assessmentID uuid.UUID) error {
+	a, err := s.assessments.GetByID(ctx, assessmentID)
 	if err != nil {
 		return err
 	}
-	if a.Status == domain.StatusClosed {
-		return domain.ValidationError{
+	if a.Status == model.StatusClosed {
+		return helper.ValidationError{
 			Field:   "status",
 			Message: "This assessment is closed. Reopen it before changing any feedback.",
 		}
@@ -211,41 +205,31 @@ func (s *Service) assessmentIsOpen(ctx context.Context, assessmentID int64) erro
 }
 
 // countUnfinalized counts questions still awaiting human sign-off.
-func (s *Service) countUnfinalized(ctx context.Context, assessmentID int64) (int, error) {
-	questions, err := s.repos.Questions.List(ctx, domain.QuestionFilter{AssessmentID: assessmentID})
+func (s *Service) countUnfinalized(ctx context.Context, assessmentID uuid.UUID) (int, error) {
+	questions, err := s.questions.List(ctx, dto.QuestionFilter{AssessmentID: assessmentID})
 	if err != nil {
 		return 0, err
 	}
 	n := 0
 	for _, q := range questions {
-		if q.ReviewStatus != domain.ReviewFinalized {
+		if q.ReviewStatus != model.ReviewFinalized {
 			n++
 		}
 	}
 	return n, nil
 }
 
-// SignOffProgress is the reviewer-facing state of an assessment's sign-off.
-type SignOffProgress struct {
-	Total        int
-	Finalized    int
-	Pending      int
-	NoDraft      int
-	Percent      int
-	ReadyToClose bool
-}
-
 // Progress reports how far the human review has got, for the header bar.
-func (s *Service) Progress(ctx context.Context, assessmentID int64) (SignOffProgress, error) {
-	questions, err := s.repos.Questions.List(ctx, domain.QuestionFilter{AssessmentID: assessmentID})
+func (s *Service) Progress(ctx context.Context, assessmentID uuid.UUID) (dto.SignOffProgress, error) {
+	questions, err := s.questions.List(ctx, dto.QuestionFilter{AssessmentID: assessmentID})
 	if err != nil {
-		return SignOffProgress{}, err
+		return dto.SignOffProgress{}, err
 	}
-	var p SignOffProgress
+	var p dto.SignOffProgress
 	p.Total = len(questions)
 	for _, q := range questions {
 		switch {
-		case q.ReviewStatus == domain.ReviewFinalized:
+		case q.ReviewStatus == model.ReviewFinalized:
 			p.Finalized++
 		case strings.TrimSpace(q.AssessorFeedbackDraft) == "":
 			p.NoDraft++

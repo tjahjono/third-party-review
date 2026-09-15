@@ -5,7 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+	"third-party-review/internal/service"
+
+	"github.com/google/uuid"
 )
 
 // Mock is a deterministic AIReviewer used by tests and by local development
@@ -20,7 +25,7 @@ type Mock struct {
 	FailOn string
 	// SkipQuestionIDs are omitted from batch responses, simulating a model
 	// that silently drops items.
-	SkipQuestionIDs map[int64]bool
+	SkipQuestionIDs map[uuid.UUID]bool
 }
 
 // NewMock constructs the mock reviewer.
@@ -37,20 +42,20 @@ var vagueMarkers = []string{
 }
 
 // ReviewAnswer scores one answer with simple, explainable rules.
-func (m *Mock) ReviewAnswer(_ context.Context, req domain.ReviewRequest) (domain.ReviewResult, error) {
+func (m *Mock) ReviewAnswer(_ context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
 	return m.score(req.Question), nil
 }
 
 // ReviewBatch scores every question in the batch.
-func (m *Mock) ReviewBatch(_ context.Context, req domain.BatchReviewRequest) (domain.BatchReviewResponse, error) {
+func (m *Mock) ReviewBatch(_ context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
 	if m.FailOn != "" {
 		for _, q := range req.Questions {
 			if strings.Contains(q.QuestionText, m.FailOn) {
-				return domain.BatchReviewResponse{}, fmt.Errorf("mock: induced failure on %q", m.FailOn)
+				return dto.BatchReviewResponse{}, fmt.Errorf("mock: induced failure on %q", m.FailOn)
 			}
 		}
 	}
-	out := domain.BatchReviewResponse{Results: map[int64]domain.ReviewResult{}}
+	out := dto.BatchReviewResponse{Results: map[uuid.UUID]model.ReviewResult{}}
 	for _, q := range req.Questions {
 		if m.SkipQuestionIDs[q.QuestionID] {
 			continue
@@ -64,10 +69,10 @@ func (m *Mock) ReviewBatch(_ context.Context, req domain.BatchReviewRequest) (do
 }
 
 // Summarize writes a deterministic narrative from the supplied aggregates.
-func (m *Mock) Summarize(_ context.Context, req domain.SummaryRequest) (string, error) {
+func (m *Mock) Summarize(_ context.Context, req dto.SummaryRequest) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s presents %s residual risk overall, scoring %.2f out of 5 across %d reviewed answers. ",
-		orDash(req.VendorName), strings.ToLower(domain.BandFromFloat(req.OverallScore).Label()),
+		orDash(req.VendorName), strings.ToLower(helper.RiskBandLabel(helper.BandFromFloat(req.OverallScore))),
 		req.OverallScore, req.QuestionCount)
 	fmt.Fprintf(&b, "%d answer(s) were flagged and %d were missing or incomplete.\n\n",
 		req.FlaggedCount, req.IncompleteCount)
@@ -89,11 +94,11 @@ func (m *Mock) Summarize(_ context.Context, req domain.SummaryRequest) (string, 
 
 // score applies the rule set. It mirrors the scale the real system prompt
 // describes so fixtures and expectations stay consistent across providers.
-func (m *Mock) score(q domain.QuestionContext) domain.ReviewResult {
+func (m *Mock) score(q dto.QuestionContext) model.ReviewResult {
 	answer := strings.TrimSpace(q.ThirdPartyAnswer)
 	lower := strings.ToLower(answer)
 
-	res := domain.ReviewResult{
+	res := model.ReviewResult{
 		QuestionID: q.QuestionID,
 		Provider:   m.Name(),
 		Model:      "mock",
@@ -103,9 +108,9 @@ func (m *Mock) score(q domain.QuestionContext) domain.ReviewResult {
 	switch {
 	case answer == "":
 		res.RiskScore = 5
-		res.Completeness = domain.CompletenessMissing
-		res.Flags = append(res.Flags, domain.Flag{
-			Kind:   domain.FlagMissingAnswer,
+		res.Completeness = model.CompletenessMissing
+		res.Flags = append(res.Flags, model.Flag{
+			Kind:   model.FlagMissingAnswer,
 			Detail: "The vendor left this question unanswered.",
 		})
 		res.Rationale = "No answer was provided."
@@ -116,9 +121,9 @@ func (m *Mock) score(q domain.QuestionContext) domain.ReviewResult {
 
 	case isVague(lower):
 		res.RiskScore = 4
-		res.Completeness = domain.CompletenessPartial
-		res.Flags = append(res.Flags, domain.Flag{
-			Kind:   domain.FlagVague,
+		res.Completeness = model.CompletenessPartial
+		res.Flags = append(res.Flags, model.Flag{
+			Kind:   model.FlagVague,
 			Detail: "The answer asserts a control without naming it or describing its scope.",
 		})
 		res.Rationale = "The answer relies on generic assurance language rather than a specific control."
@@ -129,7 +134,7 @@ func (m *Mock) score(q domain.QuestionContext) domain.ReviewResult {
 
 	case len([]rune(answer)) < 40:
 		res.RiskScore = 3
-		res.Completeness = domain.CompletenessPartial
+		res.Completeness = model.CompletenessPartial
 		res.Rationale = "The answer is brief and leaves material detail unstated."
 		res.FeedbackDraft = fmt.Sprintf(
 			"The vendor gave a short answer to this %s question that leaves the detail of the control unstated. Ask for the specifics: what is implemented, over what scope, and how it is verified.",
@@ -137,7 +142,7 @@ func (m *Mock) score(q domain.QuestionContext) domain.ReviewResult {
 
 	default:
 		res.RiskScore = 2
-		res.Completeness = domain.CompletenessComplete
+		res.Completeness = model.CompletenessComplete
 		res.Rationale = "The answer describes a specific control."
 		res.FeedbackDraft = fmt.Sprintf(
 			"The vendor describes a specific control in response to this %s question and the answer is responsive to what was asked. No further information is required at this stage.",
@@ -148,13 +153,13 @@ func (m *Mock) score(q domain.QuestionContext) domain.ReviewResult {
 	// Absent evidence on an otherwise adequate claim is worth a note, not a
 	// higher score - the same judgement the real prompt asks for.
 	if !q.HasEvidence && res.RiskScore <= 3 {
-		res.Flags = append(res.Flags, domain.Flag{
-			Kind:   domain.FlagEvidenceAbsent,
+		res.Flags = append(res.Flags, model.Flag{
+			Kind:   model.FlagEvidenceAbsent,
 			Detail: "No supporting evidence reference was supplied for this claim.",
 		})
 	}
 
-	res.Normalize()
+	helper.NormalizeResult(&res)
 	return res
 }
 
@@ -170,4 +175,4 @@ func isVague(lowerAnswer string) bool {
 	return false
 }
 
-var _ domain.AIReviewer = (*Mock)(nil)
+var _ service.AIReviewer = (*Mock)(nil)

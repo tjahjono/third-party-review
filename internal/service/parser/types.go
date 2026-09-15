@@ -143,6 +143,36 @@ func (p *Preview) Ingestable() bool {
 	return p != nil && p.Blocker == "" && p.QuestionCount > 0
 }
 
+// SyncCandidates rewrites the per-column candidate list to agree with a
+// mapping.
+//
+// Candidates is what the mapping screen renders its dropdowns from, while
+// Mapping is what the parser actually uses. They are produced together by
+// AutoMap, but anything that replaces Mapping afterwards - a user correcting a
+// column, or a previously confirmed mapping being restored - must bring
+// Candidates with it. Without this the screen redraws every dropdown at its
+// original guess and the correction silently disappears, which looks from the
+// outside like the control does nothing at all.
+func (p *Preview) SyncCandidates(m *domain.ColumnMapping) {
+	if p == nil || m == nil {
+		return
+	}
+	byColumn := make(map[int]domain.ColumnBinding, len(m.Bindings))
+	for _, b := range m.Bindings {
+		byColumn[b.Index] = b
+	}
+	for i := range p.Candidates {
+		b, mapped := byColumn[p.Candidates[i].Index]
+		if !mapped {
+			p.Candidates[i].Suggested = ""
+			p.Candidates[i].Confidence = 0
+			continue
+		}
+		p.Candidates[i].Suggested = b.Field
+		p.Candidates[i].Confidence = b.Confidence
+	}
+}
+
 // ErrNoQuestions is returned when a file parses cleanly but yields no usable
 // question rows.
 var ErrNoQuestions = errors.New("no question rows found")

@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 	"third-party-review/internal/service/auth"
 )
 
@@ -23,7 +24,7 @@ const CSRFHeader = "X-CSRF-Token"
 
 // Authenticator is the subset of the auth service this middleware needs.
 type Authenticator interface {
-	Authenticate(ctx context.Context, sessionID string) (*domain.User, *domain.Session, error)
+	Authenticate(ctx context.Context, sessionID string) (*model.User, *model.Session, error)
 }
 
 // Auth resolves the session cookie and attaches the user to the request
@@ -39,7 +40,7 @@ func Auth(a Authenticator, secret string) func(http.Handler) http.Handler {
 				case err == nil:
 					ctx = WithUser(ctx, user)
 					ctx = WithCSRFToken(ctx, auth.CSRFToken(c.Value, secret))
-				case errors.Is(err, domain.ErrNotFound):
+				case errors.Is(err, helper.ErrNotFound):
 					// Expired, unknown, or still pending MFA. Clear the cookie
 					// so the browser stops sending a session that will never
 					// work again.

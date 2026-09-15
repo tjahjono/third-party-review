@@ -135,3 +135,26 @@ type QuestionFilter struct {
 	// above the given 1-5 value.
 	MinRiskScore *int
 }
+
+// BulkFinalizeResult reports what a bulk sign-off actually did.
+type BulkFinalizeResult struct {
+	Finalized int
+	// Skipped counts questions passed over because they had no draft to sign
+	// off. Accepting a blank draft would put an empty finding into the record,
+	// which reads as reviewed.
+	Skipped int
+	// AlreadyFinal counts questions a human had already signed.
+	AlreadyFinal int
+}
+
+// SignOffProgress is the reviewer-facing state of an assessment's sign-off.
+type SignOffProgress struct {
+	Total     int
+	Finalized int
+	Pending   int
+	// NoDraft counts pending questions the AI left without a draft, which have
+	// to be written by hand before the assessment can be closed.
+	NoDraft      int
+	Percent      int
+	ReadyToClose bool
+}

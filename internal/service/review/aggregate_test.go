@@ -4,33 +4,47 @@ import (
 	"math"
 	"testing"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
-func q(id, domainID int64, name string, status domain.ReviewStatus) *domain.Question {
-	return &domain.Question{ID: id, DomainID: domainID, DomainName: name, ReviewStatus: status}
+// uid turns a small test number into a stable uuid, so a test can still say
+// "question 3" while the code under test sees real uuids. The bytes are
+// deterministic, which keeps failure output readable.
+func uid(n int) uuid.UUID {
+	var u uuid.UUID
+	u[0] = 0x7e
+	u[14] = byte(n >> 8)
+	u[15] = byte(n)
+	return u
 }
 
-func res(qid int64, score domain.RiskScore, c domain.Completeness, flags ...domain.Flag) *domain.ReviewResult {
-	return &domain.ReviewResult{QuestionID: qid, RiskScore: score, Completeness: c, Flags: flags}
+func q(id, domainID uuid.UUID, name string, status model.ReviewStatus) *model.Question {
+	return &model.Question{ID: id, DomainID: domainID, DomainName: name, ReviewStatus: status}
+}
+
+func res(qid uuid.UUID, score model.RiskScore, c model.Completeness, flags ...model.Flag) *model.ReviewResult {
+	return &model.ReviewResult{QuestionID: qid, RiskScore: score, Completeness: c, Flags: flags}
 }
 
 // The behaviour this whole scheme exists for: a handful of serious findings
 // among many good answers must not average away into "low risk".
 func TestWeightedAggregateDoesNotDiluteCriticalFindings(t *testing.T) {
-	var questions []*domain.Question
-	results := map[int64]*domain.ReviewResult{}
+	var questions []*model.Question
+	results := map[uuid.UUID]*model.ReviewResult{}
 
 	// 17 strong answers.
-	for i := int64(1); i <= 17; i++ {
-		questions = append(questions, q(i, 1, "Network Security", domain.ReviewAIDrafted))
-		results[i] = res(i, 1, domain.CompletenessComplete)
+	for i := 1; i <= 17; i++ {
+		questions = append(questions, q(uid(i), uid(1000), "Network Security", model.ReviewAIDrafted))
+		results[uid(i)] = res(uid(i), 1, model.CompletenessComplete)
 	}
 	// 3 serious gaps.
-	for i := int64(18); i <= 20; i++ {
-		questions = append(questions, q(i, 1, "Network Security", domain.ReviewAIDrafted))
-		results[i] = res(i, 5, domain.CompletenessMissing,
-			domain.Flag{Kind: domain.FlagMissingAnswer, Detail: "unanswered"})
+	for i := 18; i <= 20; i++ {
+		questions = append(questions, q(uid(i), uid(1000), "Network Security", model.ReviewAIDrafted))
+		results[uid(i)] = res(uid(i), 5, model.CompletenessMissing,
+			model.Flag{Kind: model.FlagMissingAnswer, Detail: "unanswered"})
 	}
 
 	s := Aggregate(questions, results)
@@ -39,13 +53,13 @@ func TestWeightedAggregateDoesNotDiluteCriticalFindings(t *testing.T) {
 		t.Errorf("MeanScore = %.2f, want 1.60", s.MeanScore)
 	}
 	// The plain mean would band this Low, which is the failure mode.
-	if domain.BandFromFloat(s.MeanScore) != domain.BandLow {
-		t.Fatalf("precondition: the plain mean should band Low, got %s", domain.BandFromFloat(s.MeanScore))
+	if helper.BandFromFloat(s.MeanScore) != model.BandLow {
+		t.Fatalf("precondition: the plain mean should band Low, got %s", helper.BandFromFloat(s.MeanScore))
 	}
 	if s.OverallScore <= s.MeanScore {
 		t.Errorf("OverallScore (%.2f) must exceed the plain mean (%.2f)", s.OverallScore, s.MeanScore)
 	}
-	if got := domain.BandFromFloat(s.OverallScore); got == domain.BandLow {
+	if got := helper.BandFromFloat(s.OverallScore); got == model.BandLow {
 		t.Errorf("OverallScore %.2f bands as %s; three unanswered questions must not read as low risk",
 			s.OverallScore, got)
 	}
@@ -61,48 +75,48 @@ func TestWeightedAggregateDoesNotDiluteCriticalFindings(t *testing.T) {
 }
 
 func TestAggregateUniformScores(t *testing.T) {
-	var questions []*domain.Question
-	results := map[int64]*domain.ReviewResult{}
-	for i := int64(1); i <= 10; i++ {
-		questions = append(questions, q(i, 1, "Data Security", domain.ReviewAIDrafted))
-		results[i] = res(i, 3, domain.CompletenessComplete)
+	var questions []*model.Question
+	results := map[uuid.UUID]*model.ReviewResult{}
+	for i := 1; i <= 10; i++ {
+		questions = append(questions, q(uid(i), uid(1000), "Data Security", model.ReviewAIDrafted))
+		results[uid(i)] = res(uid(i), 3, model.CompletenessComplete)
 	}
 	s := Aggregate(questions, results)
 	// With no spread the weighted score must equal the mean exactly.
 	if s.OverallScore != 3 || s.MeanScore != 3 {
 		t.Errorf("uniform scores: overall = %.2f, mean = %.2f, want 3.00 for both", s.OverallScore, s.MeanScore)
 	}
-	if s.DomainScores[0].Band() != domain.BandMedium {
-		t.Errorf("band = %s, want Medium", s.DomainScores[0].Band())
+	if helper.DomainBand(s.DomainScores[0]) != model.BandMedium {
+		t.Errorf("band = %s, want Medium", helper.DomainBand(s.DomainScores[0]))
 	}
 }
 
 func TestAggregatePerDomainSeparation(t *testing.T) {
-	questions := []*domain.Question{
-		q(1, 1, "Network Security", domain.ReviewAIDrafted),
-		q(2, 1, "Network Security", domain.ReviewAIDrafted),
-		q(3, 2, "AI Security", domain.ReviewAIDrafted),
-		q(4, 2, "AI Security", domain.ReviewAIDrafted),
+	questions := []*model.Question{
+		q(uid(1), uid(1001), "Network Security", model.ReviewAIDrafted),
+		q(uid(2), uid(1001), "Network Security", model.ReviewAIDrafted),
+		q(uid(3), uid(1002), "AI Security", model.ReviewAIDrafted),
+		q(uid(4), uid(1002), "AI Security", model.ReviewAIDrafted),
 	}
-	results := map[int64]*domain.ReviewResult{
-		1: res(1, 1, domain.CompletenessComplete),
-		2: res(2, 2, domain.CompletenessComplete),
-		3: res(3, 5, domain.CompletenessMissing),
-		4: res(4, 5, domain.CompletenessMissing),
+	results := map[uuid.UUID]*model.ReviewResult{
+		uid(1): res(uid(1), 1, model.CompletenessComplete),
+		uid(2): res(uid(2), 2, model.CompletenessComplete),
+		uid(3): res(uid(3), 5, model.CompletenessMissing),
+		uid(4): res(uid(4), 5, model.CompletenessMissing),
 	}
 	s := Aggregate(questions, results)
 	if len(s.DomainScores) != 2 {
 		t.Fatalf("got %d domain scores, want 2", len(s.DomainScores))
 	}
-	byName := map[string]domain.DomainScore{}
+	byName := map[string]model.DomainScore{}
 	for _, d := range s.DomainScores {
 		byName[d.DomainName] = d
 	}
-	if byName["Network Security"].Band() != domain.BandLow {
-		t.Errorf("Network Security band = %s, want Low", byName["Network Security"].Band())
+	if helper.DomainBand(byName["Network Security"]) != model.BandLow {
+		t.Errorf("Network Security band = %s, want Low", helper.DomainBand(byName["Network Security"]))
 	}
-	if byName["AI Security"].Band() != domain.BandCritical {
-		t.Errorf("AI Security band = %s, want Critical", byName["AI Security"].Band())
+	if helper.DomainBand(byName["AI Security"]) != model.BandCritical {
+		t.Errorf("AI Security band = %s, want Critical", helper.DomainBand(byName["AI Security"]))
 	}
 	if byName["AI Security"].IncompleteCount != 2 {
 		t.Errorf("AI Security incomplete = %d, want 2", byName["AI Security"].IncompleteCount)
@@ -110,13 +124,13 @@ func TestAggregatePerDomainSeparation(t *testing.T) {
 }
 
 func TestAggregateCountsFinalizationProgress(t *testing.T) {
-	questions := []*domain.Question{
-		q(1, 1, "Data Security", domain.ReviewFinalized),
-		q(2, 1, "Data Security", domain.ReviewFinalized),
-		q(3, 1, "Data Security", domain.ReviewAIDrafted),
-		q(4, 1, "Data Security", domain.ReviewPending),
+	questions := []*model.Question{
+		q(uid(1), uid(1001), "Data Security", model.ReviewFinalized),
+		q(uid(2), uid(1001), "Data Security", model.ReviewFinalized),
+		q(uid(3), uid(1001), "Data Security", model.ReviewAIDrafted),
+		q(uid(4), uid(1001), "Data Security", model.ReviewPending),
 	}
-	s := Aggregate(questions, map[int64]*domain.ReviewResult{})
+	s := Aggregate(questions, map[uuid.UUID]*model.ReviewResult{})
 	if s.FinalizedCount != 2 {
 		t.Errorf("FinalizedCount = %d, want 2", s.FinalizedCount)
 	}
@@ -126,17 +140,17 @@ func TestAggregateCountsFinalizationProgress(t *testing.T) {
 	if s.QuestionCount != 4 {
 		t.Errorf("QuestionCount = %d, want 4", s.QuestionCount)
 	}
-	if got := s.PercentFinalized(); got != 50 {
+	if got := helper.PercentFinalized(s); got != 50 {
 		t.Errorf("PercentFinalized = %d, want 50", got)
 	}
 }
 
 func TestAggregateUnscoredQuestionsDoNotCount(t *testing.T) {
-	questions := []*domain.Question{
-		q(1, 1, "Cloud Security", domain.ReviewAIDrafted),
-		q(2, 1, "Cloud Security", domain.ReviewPending),
+	questions := []*model.Question{
+		q(uid(1), uid(1001), "Cloud Security", model.ReviewAIDrafted),
+		q(uid(2), uid(1001), "Cloud Security", model.ReviewPending),
 	}
-	results := map[int64]*domain.ReviewResult{1: res(1, 4, domain.CompletenessComplete)}
+	results := map[uuid.UUID]*model.ReviewResult{uid(1): res(uid(1), 4, model.CompletenessComplete)}
 	s := Aggregate(questions, results)
 	if s.ScoredCount != 1 {
 		t.Errorf("ScoredCount = %d, want 1", s.ScoredCount)
@@ -155,24 +169,24 @@ func TestAggregateEmpty(t *testing.T) {
 	if s.QuestionCount != 0 || s.OverallScore != 0 {
 		t.Errorf("empty aggregate = %+v", s)
 	}
-	if s.Band() != domain.BandUnknown {
-		t.Errorf("empty band = %s, want unknown", s.Band())
+	if helper.SummaryBand(s) != model.BandUnknown {
+		t.Errorf("empty band = %s, want unknown", helper.SummaryBand(s))
 	}
 }
 
 func TestTopFindingsOrdersByRisk(t *testing.T) {
-	questions := []*domain.Question{
-		q(1, 1, "Network Security", domain.ReviewAIDrafted),
-		q(2, 1, "Network Security", domain.ReviewAIDrafted),
-		q(3, 1, "Network Security", domain.ReviewAIDrafted),
+	questions := []*model.Question{
+		q(uid(1), uid(1001), "Network Security", model.ReviewAIDrafted),
+		q(uid(2), uid(1001), "Network Security", model.ReviewAIDrafted),
+		q(uid(3), uid(1001), "Network Security", model.ReviewAIDrafted),
 	}
 	questions[0].QuestionText = "low"
 	questions[1].QuestionText = "critical"
 	questions[2].QuestionText = "medium"
-	results := map[int64]*domain.ReviewResult{
-		1: res(1, 1, domain.CompletenessComplete),
-		2: res(2, 5, domain.CompletenessMissing, domain.Flag{Kind: domain.FlagMissingAnswer}),
-		3: res(3, 3, domain.CompletenessPartial),
+	results := map[uuid.UUID]*model.ReviewResult{
+		uid(1): res(uid(1), 1, model.CompletenessComplete),
+		uid(2): res(uid(2), 5, model.CompletenessMissing, model.Flag{Kind: model.FlagMissingAnswer}),
+		uid(3): res(uid(3), 3, model.CompletenessPartial),
 	}
 	top := TopFindings(questions, results, 2)
 	if len(top) != 2 {

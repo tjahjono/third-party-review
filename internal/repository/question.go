@@ -1,4 +1,4 @@
-package postgres
+package repository
 
 import (
 	"context"
@@ -6,21 +6,44 @@ import (
 	"strings"
 	"time"
 
-	"third-party-review/internal/domain"
+	"github.com/google/uuid"
+
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 )
 
-// QuestionRepo is the PostgreSQL implementation of domain.QuestionRepository.
-type QuestionRepo struct{ db *DB }
+type QuestionRepository interface {
+	BulkCreate(ctx context.Context, questions []*model.Question) error
+	Update(ctx context.Context, q *model.Question) error
+	GetByID(ctx context.Context, id uuid.UUID) (*model.Question, error)
+	List(ctx context.Context, f dto.QuestionFilter) ([]*model.Question, error)
+	ListForReview(ctx context.Context, assessmentID uuid.UUID) ([]*model.Question, error)
+	CountByAssessment(ctx context.Context, assessmentID uuid.UUID) (int, error)
+	SetDomain(ctx context.Context, questionID, domainID uuid.UUID) error
+	ApplyDraft(ctx context.Context, questionID uuid.UUID, draft string) error
+	Finalize(ctx context.Context, questionID uuid.UUID, final string, userID *uuid.UUID, at time.Time) error
+	Unfinalize(ctx context.Context, questionID uuid.UUID) error
+	DeleteByAssessment(ctx context.Context, assessmentID uuid.UUID) error
+}
 
-const questionCols = `
+type questionRepository struct {
+	db helper.ConnProvider
+}
+
+func NewQuestionRepository(db helper.ConnProvider) QuestionRepository {
+	return &questionRepository{db: db}
+}
+
+const questionColumns = `
 	q.id, q.assessment_id, q.domain_id, q.source_row, q.position,
 	q.question_text, q.assessor_remark, q.third_party_answer,
 	q.third_party_remark, q.third_party_feedback, q.link_evidence,
 	COALESCE(q.assessor_feedback_draft, ''), COALESCE(q.assessor_feedback_final, ''),
 	q.review_status, q.finalized_at, q.finalized_by, q.created_at, q.updated_at`
 
-func scanQuestion(s interface{ Scan(...any) error }, withDomain bool) (*domain.Question, error) {
-	var q domain.Question
+func scanQuestion(s interface{ Scan(...any) error }, withDomain bool) (*model.Question, error) {
+	var q model.Question
 	targets := []any{
 		&q.ID, &q.AssessmentID, &q.DomainID, &q.SourceRow, &q.Position,
 		&q.QuestionText, &q.AssessorRemark, &q.ThirdPartyAnswer,
@@ -32,7 +55,7 @@ func scanQuestion(s interface{ Scan(...any) error }, withDomain bool) (*domain.Q
 		targets = append(targets, &q.DomainName, &q.ScrutinyNote)
 	}
 	if err := s.Scan(targets...); err != nil {
-		return nil, mapErr(err)
+		return nil, helper.MapErr(err)
 	}
 	return &q, nil
 }
@@ -40,7 +63,7 @@ func scanQuestion(s interface{ Scan(...any) error }, withDomain bool) (*domain.Q
 // BulkCreate inserts every question for an assessment in one round trip and
 // writes the assigned IDs back onto the supplied slice. Ingestion of a
 // hundred-row questionnaire is therefore a single statement, not a hundred.
-func (r *QuestionRepo) BulkCreate(ctx context.Context, questions []*domain.Question) error {
+func (r *questionRepository) BulkCreate(ctx context.Context, questions []*model.Question) error {
 	if len(questions) == 0 {
 		return nil
 	}
@@ -53,9 +76,6 @@ func (r *QuestionRepo) BulkCreate(ctx context.Context, questions []*domain.Quest
 		assessor_remark, third_party_answer, third_party_remark,
 		third_party_feedback, link_evidence, review_status) VALUES `)
 	for i, q := range questions {
-		if err := q.Validate(); err != nil {
-			return fmt.Errorf("question at source row %d: %w", q.SourceRow+1, err)
-		}
 		if i > 0 {
 			sb.WriteString(", ")
 		}
@@ -70,9 +90,9 @@ func (r *QuestionRepo) BulkCreate(ctx context.Context, questions []*domain.Quest
 	}
 	sb.WriteString(" RETURNING id, created_at, updated_at")
 
-	rows, err := r.db.q(ctx).Query(ctx, sb.String(), args...)
+	rows, err := r.db.Querier(ctx).Query(ctx, sb.String(), args...)
 	if err != nil {
-		return mapErr(err)
+		return helper.MapErr(err)
 	}
 	defer rows.Close()
 
@@ -82,23 +102,20 @@ func (r *QuestionRepo) BulkCreate(ctx context.Context, questions []*domain.Quest
 			break
 		}
 		if err := rows.Scan(&questions[i].ID, &questions[i].CreatedAt, &questions[i].UpdatedAt); err != nil {
-			return mapErr(err)
+			return helper.MapErr(err)
 		}
 		i++
 	}
 	if err := rows.Err(); err != nil {
-		return mapErr(err)
+		return helper.MapErr(err)
 	}
 	if i != len(questions) {
-		return fmt.Errorf("postgres: inserted %d questions but expected %d", i, len(questions))
+		return fmt.Errorf("repository: inserted %d questions but expected %d", i, len(questions))
 	}
 	return nil
 }
 
-func (r *QuestionRepo) Update(ctx context.Context, q *domain.Question) error {
-	if err := q.Validate(); err != nil {
-		return err
-	}
+func (r *questionRepository) Update(ctx context.Context, q *model.Question) error {
 	const stmt = `
 		UPDATE questions
 		   SET domain_id = $2, question_text = $3, assessor_remark = $4,
@@ -106,22 +123,22 @@ func (r *QuestionRepo) Update(ctx context.Context, q *domain.Question) error {
 		       third_party_feedback = $7, link_evidence = $8
 		 WHERE id = $1
 		RETURNING updated_at`
-	err := r.db.q(ctx).QueryRow(ctx, stmt, q.ID, q.DomainID, q.QuestionText,
+	err := r.db.Querier(ctx).QueryRow(ctx, stmt, q.ID, q.DomainID, q.QuestionText,
 		q.AssessorRemark, q.ThirdPartyAnswer, q.ThirdPartyRemark,
 		q.ThirdPartyFeedback, q.LinkEvidence).Scan(&q.UpdatedAt)
-	return mapErr(err)
+	return helper.MapErr(err)
 }
 
-func (r *QuestionRepo) GetByID(ctx context.Context, id int64) (*domain.Question, error) {
+func (r *questionRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Question, error) {
 	const stmt = `
-		SELECT ` + questionCols + `, d.name, d.scrutiny_note
+		SELECT ` + questionColumns + `, d.name, d.scrutiny_note
 		  FROM questions q
 		  JOIN assessment_domains d ON d.id = q.domain_id
 		 WHERE q.id = $1`
-	return scanQuestion(r.db.q(ctx).QueryRow(ctx, stmt, id), true)
+	return scanQuestion(r.db.Querier(ctx).QueryRow(ctx, stmt, id), true)
 }
 
-func (r *QuestionRepo) List(ctx context.Context, f domain.QuestionFilter) ([]*domain.Question, error) {
+func (r *questionRepository) List(ctx context.Context, f dto.QuestionFilter) ([]*model.Question, error) {
 	args := []any{f.AssessmentID}
 	clauses := []string{"q.assessment_id = $1"}
 	if f.DomainID != nil {
@@ -153,15 +170,15 @@ func (r *QuestionRepo) List(ctx context.Context, f domain.QuestionFilter) ([]*do
 		  JOIN assessment_domains d ON d.id = q.domain_id
 		 WHERE %s
 		 ORDER BY d.sort_order, q.position, q.id`,
-		questionCols, strings.Join(clauses, " AND "))
+		questionColumns, strings.Join(clauses, " AND "))
 
-	rows, err := r.db.q(ctx).Query(ctx, stmt, args...)
+	rows, err := r.db.Querier(ctx).Query(ctx, stmt, args...)
 	if err != nil {
-		return nil, mapErr(err)
+		return nil, helper.MapErr(err)
 	}
 	defer rows.Close()
 
-	var out []*domain.Question
+	var out []*model.Question
 	for rows.Next() {
 		q, err := scanQuestion(rows, true)
 		if err != nil {
@@ -169,26 +186,26 @@ func (r *QuestionRepo) List(ctx context.Context, f domain.QuestionFilter) ([]*do
 		}
 		out = append(out, q)
 	}
-	return out, mapErr(rows.Err())
+	return out, helper.MapErr(rows.Err())
 }
 
-func (r *QuestionRepo) ListForReview(ctx context.Context, assessmentID int64) ([]*domain.Question, error) {
-	return r.List(ctx, domain.QuestionFilter{AssessmentID: assessmentID})
+func (r *questionRepository) ListForReview(ctx context.Context, assessmentID uuid.UUID) ([]*model.Question, error) {
+	return r.List(ctx, dto.QuestionFilter{AssessmentID: assessmentID})
 }
 
-func (r *QuestionRepo) CountByAssessment(ctx context.Context, assessmentID int64) (int, error) {
+func (r *questionRepository) CountByAssessment(ctx context.Context, assessmentID uuid.UUID) (int, error) {
 	var n int
-	err := r.db.q(ctx).QueryRow(ctx, `SELECT COUNT(*) FROM questions WHERE assessment_id = $1`, assessmentID).Scan(&n)
-	return n, mapErr(err)
+	err := r.db.Querier(ctx).QueryRow(ctx, `SELECT COUNT(*) FROM questions WHERE assessment_id = $1`, assessmentID).Scan(&n)
+	return n, helper.MapErr(err)
 }
 
-func (r *QuestionRepo) SetDomain(ctx context.Context, questionID, domainID int64) error {
-	tag, err := r.db.q(ctx).Exec(ctx, `UPDATE questions SET domain_id = $2 WHERE id = $1`, questionID, domainID)
+func (r *questionRepository) SetDomain(ctx context.Context, questionID, domainID uuid.UUID) error {
+	tag, err := r.db.Querier(ctx).Exec(ctx, `UPDATE questions SET domain_id = $2 WHERE id = $1`, questionID, domainID)
 	if err != nil {
-		return mapErr(err)
+		return helper.MapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
+		return helper.ErrNotFound
 	}
 	return nil
 }
@@ -196,28 +213,28 @@ func (r *QuestionRepo) SetDomain(ctx context.Context, questionID, domainID int64
 // ApplyDraft writes the AI draft and moves the question to ai_drafted. A
 // question a human has already finalized is left alone: re-running a review
 // must not silently reopen signed-off work.
-func (r *QuestionRepo) ApplyDraft(ctx context.Context, questionID int64, draft string) error {
+func (r *questionRepository) ApplyDraft(ctx context.Context, questionID uuid.UUID, draft string) error {
 	const stmt = `
 		UPDATE questions
 		   SET assessor_feedback_draft = $2,
 		       review_status = CASE WHEN review_status = 'finalized'
 		                            THEN review_status ELSE 'ai_drafted' END
 		 WHERE id = $1`
-	tag, err := r.db.q(ctx).Exec(ctx, stmt, questionID, draft)
+	tag, err := r.db.Querier(ctx).Exec(ctx, stmt, questionID, draft)
 	if err != nil {
-		return mapErr(err)
+		return helper.MapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
+		return helper.ErrNotFound
 	}
 	return nil
 }
 
 // Finalize records human-signed-off feedback. assessor_feedback_draft is
 // deliberately untouched so the AI's original wording is always recoverable.
-func (r *QuestionRepo) Finalize(ctx context.Context, questionID int64, final string, userID *int64, at time.Time) error {
+func (r *questionRepository) Finalize(ctx context.Context, questionID uuid.UUID, final string, userID *uuid.UUID, at time.Time) error {
 	if strings.TrimSpace(final) == "" {
-		return domain.ValidationError{Field: "assessor_feedback_final", Message: "Feedback cannot be empty when finalizing."}
+		return helper.ValidationError{Field: "assessor_feedback_final", Message: "Feedback cannot be empty when finalizing."}
 	}
 	const stmt = `
 		UPDATE questions
@@ -226,19 +243,19 @@ func (r *QuestionRepo) Finalize(ctx context.Context, questionID int64, final str
 		       finalized_at = $3,
 		       finalized_by = $4
 		 WHERE id = $1`
-	tag, err := r.db.q(ctx).Exec(ctx, stmt, questionID, final, at, userID)
+	tag, err := r.db.Querier(ctx).Exec(ctx, stmt, questionID, final, at, userID)
 	if err != nil {
-		return mapErr(err)
+		return helper.MapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
+		return helper.ErrNotFound
 	}
 	return nil
 }
 
 // Unfinalize reopens a question. The final text is kept so an accidental
 // reopen loses nothing.
-func (r *QuestionRepo) Unfinalize(ctx context.Context, questionID int64) error {
+func (r *questionRepository) Unfinalize(ctx context.Context, questionID uuid.UUID) error {
 	const stmt = `
 		UPDATE questions
 		   SET review_status = CASE WHEN COALESCE(assessor_feedback_draft, '') = ''
@@ -246,19 +263,17 @@ func (r *QuestionRepo) Unfinalize(ctx context.Context, questionID int64) error {
 		       finalized_at = NULL,
 		       finalized_by = NULL
 		 WHERE id = $1`
-	tag, err := r.db.q(ctx).Exec(ctx, stmt, questionID)
+	tag, err := r.db.Querier(ctx).Exec(ctx, stmt, questionID)
 	if err != nil {
-		return mapErr(err)
+		return helper.MapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
+		return helper.ErrNotFound
 	}
 	return nil
 }
 
-func (r *QuestionRepo) DeleteByAssessment(ctx context.Context, assessmentID int64) error {
-	_, err := r.db.q(ctx).Exec(ctx, `DELETE FROM questions WHERE assessment_id = $1`, assessmentID)
-	return mapErr(err)
+func (r *questionRepository) DeleteByAssessment(ctx context.Context, assessmentID uuid.UUID) error {
+	_, err := r.db.Querier(ctx).Exec(ctx, `DELETE FROM questions WHERE assessment_id = $1`, assessmentID)
+	return helper.MapErr(err)
 }
-
-var _ domain.QuestionRepository = (*QuestionRepo)(nil)

@@ -4,18 +4,20 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 )
 
 // seededDomains mirrors what migration 000002 inserts, so parser tests run
 // against the same names production will see.
-func seededDomains() []*domain.AssessmentDomain {
-	out := make([]*domain.AssessmentDomain, 0, len(domain.SeededDomainNames))
-	for i, name := range domain.SeededDomainNames {
-		out = append(out, &domain.AssessmentDomain{
-			ID:        int64(i + 1),
+func seededDomains() []*model.AssessmentDomain {
+	out := make([]*model.AssessmentDomain, 0, len(helper.SeededDomainNames))
+	for i, name := range helper.SeededDomainNames {
+		out = append(out, &model.AssessmentDomain{
+			ID:        testDomainID(i + 1),
 			Name:      name,
 			Slug:      slugify(name),
 			SortOrder: i + 1,
@@ -130,4 +132,13 @@ func standardRows() [][]string {
 		q("Is customer data used to train models?", "Absence of a policy is itself a finding.",
 			"No. We use a third-party model provider with training disabled.", "", "", "", ""),
 	}
+}
+
+// testDomainID gives each seeded fixture domain a stable uuid, so the fixtures
+// read as "domain 3" while the parser sees a real id.
+func testDomainID(n int) uuid.UUID {
+	var u uuid.UUID
+	u[0] = 0xd0
+	u[15] = byte(n)
+	return u
 }

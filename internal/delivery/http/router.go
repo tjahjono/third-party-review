@@ -17,7 +17,9 @@ import (
 
 // Deps is everything the router needs, injected by the main package.
 type Deps struct {
-	Handler       *handler.Handler
+	// Handler is the delivery contract rather than the concrete handler set,
+	// so the routing table can be tested against a stub.
+	Handler       handler.Routes
 	Auth          *auth.Service
 	SessionSecret string
 	Static        fs.FS

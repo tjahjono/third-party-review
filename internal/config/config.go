@@ -45,7 +45,7 @@ type DB struct {
 }
 
 // AI holds provider-agnostic AI reviewer settings. Provider selects which
-// concrete implementation of domain.AIReviewer is constructed at wiring time.
+// concrete implementation of service.AIReviewer is constructed at wiring time.
 type AI struct {
 	// Provider is one of: openaicompat, anthropic, mock.
 	Provider string

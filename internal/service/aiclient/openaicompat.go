@@ -12,7 +12,11 @@ import (
 	"time"
 
 	"third-party-review/internal/config"
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/model"
+	"third-party-review/internal/service"
+
+	"github.com/google/uuid"
 )
 
 // OpenAICompat talks to any endpoint that speaks the OpenAI chat-completions
@@ -180,20 +184,20 @@ func (c *OpenAICompat) do(ctx context.Context, body oaRequest) (string, error) {
 }
 
 // ReviewAnswer evaluates a single answer.
-func (c *OpenAICompat) ReviewAnswer(ctx context.Context, req domain.ReviewRequest) (domain.ReviewResult, error) {
+func (c *OpenAICompat) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
 	text, err := c.complete(ctx, systemPrompt, BuildSingle(req), true)
 	if err != nil {
-		return domain.ReviewResult{}, err
+		return model.ReviewResult{}, err
 	}
 	return parseSingle(text, req.Question.QuestionID, c.name, c.cfg.Model)
 }
 
 // ReviewBatch evaluates several answers in one call.
-func (c *OpenAICompat) ReviewBatch(ctx context.Context, req domain.BatchReviewRequest) (domain.BatchReviewResponse, error) {
+func (c *OpenAICompat) ReviewBatch(ctx context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
 	user := BuildBatch(req)
 	text, err := c.complete(ctx, systemPrompt, user, true)
 	if err != nil {
-		return domain.BatchReviewResponse{}, err
+		return dto.BatchReviewResponse{}, err
 	}
 
 	out, err := parseBatch(text, c.name, c.cfg.Model)
@@ -207,13 +211,13 @@ func (c *OpenAICompat) ReviewBatch(ctx context.Context, req domain.BatchReviewRe
 		"). Reply again with the JSON object only. No explanation, no markdown fence, no text before or after it."
 	text2, err2 := c.complete(ctx, systemPrompt, retry, true)
 	if err2 != nil {
-		return domain.BatchReviewResponse{}, err
+		return dto.BatchReviewResponse{}, err
 	}
 	return parseBatch(text2, c.name, c.cfg.Model)
 }
 
 // Summarize writes the assessment-level narrative.
-func (c *OpenAICompat) Summarize(ctx context.Context, req domain.SummaryRequest) (string, error) {
+func (c *OpenAICompat) Summarize(ctx context.Context, req dto.SummaryRequest) (string, error) {
 	text, err := c.complete(ctx, summarySystemPrompt, BuildSummary(req), false)
 	if err != nil {
 		return "", err
@@ -221,12 +225,12 @@ func (c *OpenAICompat) Summarize(ctx context.Context, req domain.SummaryRequest)
 	return strings.TrimSpace(stripFences(text)), nil
 }
 
-var _ domain.AIReviewer = (*OpenAICompat)(nil)
+var _ service.AIReviewer = (*OpenAICompat)(nil)
 
 const summarySystemPrompt = `You are an experienced third-party security assessor writing the executive summary of a completed vendor assessment for an internal risk file. You write plainly and specifically, never inflate or soften findings, and never introduce facts you were not given.`
 
 // parseSingle decodes a single-question response.
-func parseSingle(text string, questionID int64, provider, model string) (domain.ReviewResult, error) {
+func parseSingle(text string, questionID uuid.UUID, provider, modelName string) (model.ReviewResult, error) {
 	var raw rawResult
 	if err := UnmarshalLoose(text, &raw); err != nil {
 		// Some models answer a single-item prompt with the batch shape anyway.
@@ -234,10 +238,10 @@ func parseSingle(text string, questionID int64, provider, model string) (domain.
 		if err2 := UnmarshalLoose(text, &batch); err2 == nil && len(batch.Results) > 0 {
 			raw = batch.Results[0]
 		} else {
-			return domain.ReviewResult{}, fmt.Errorf("ai: %w", err)
+			return model.ReviewResult{}, fmt.Errorf("ai: %w", err)
 		}
 	}
-	res := raw.toDomain(provider, model)
+	res := raw.toResult(provider, modelName)
 	// Trust our own id over whatever the model echoed back.
 	res.QuestionID = questionID
 	res.Raw = text
@@ -246,16 +250,16 @@ func parseSingle(text string, questionID int64, provider, model string) (domain.
 
 // parseBatch decodes a multi-question response, tolerating both the documented
 // {"results":[...]} shape and a bare array.
-func parseBatch(text, provider, model string) (domain.BatchReviewResponse, error) {
-	out := domain.BatchReviewResponse{Results: map[int64]domain.ReviewResult{}, Raw: text}
+func parseBatch(text, provider, modelName string) (dto.BatchReviewResponse, error) {
+	out := dto.BatchReviewResponse{Results: map[uuid.UUID]model.ReviewResult{}, Raw: text}
 
 	var batch rawBatch
 	if err := UnmarshalLoose(text, &batch); err == nil && len(batch.Results) > 0 {
 		for _, r := range batch.Results {
-			if r.QuestionID == 0 {
+			if r.QuestionID == uuid.Nil {
 				continue
 			}
-			res := r.toDomain(provider, model)
+			res := r.toResult(provider, modelName)
 			res.Raw = ""
 			out.Results[r.QuestionID] = res
 		}
@@ -266,17 +270,17 @@ func parseBatch(text, provider, model string) (domain.BatchReviewResponse, error
 	var arr []rawResult
 	if err := UnmarshalLoose(text, &arr); err == nil && len(arr) > 0 {
 		for _, r := range arr {
-			if r.QuestionID == 0 {
+			if r.QuestionID == uuid.Nil {
 				continue
 			}
-			res := r.toDomain(provider, model)
+			res := r.toResult(provider, modelName)
 			res.Raw = ""
 			out.Results[r.QuestionID] = res
 		}
 		return out, nil
 	}
 
-	return domain.BatchReviewResponse{}, fmt.Errorf("ai: could not read any results from the model response")
+	return dto.BatchReviewResponse{}, fmt.Errorf("ai: could not read any results from the model response")
 }
 
 // stripFences removes a markdown fence wrapping prose output.

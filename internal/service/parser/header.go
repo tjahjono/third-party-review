@@ -4,7 +4,9 @@ import (
 	"sort"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 	"third-party-review/pkg/fuzzy"
 )
 
@@ -21,7 +23,7 @@ const headerScanRows = 25
 // DetectHeaderRow finds the row most likely to be the table header. It scores
 // each candidate row by how many of its cells look like known template
 // columns, preferring earlier rows when scores tie.
-func DetectHeaderRow(g *Grid) (int, float64) {
+func DetectHeaderRow(g *dto.Grid) (int, float64) {
 	limit := min(len(g.Rows), headerScanRows)
 	bestRow, bestScore := -1, 0.0
 
@@ -43,7 +45,7 @@ func DetectHeaderRow(g *Grid) (int, float64) {
 func scoreHeaderRow(row []string) float64 {
 	total, filled := 0.0, 0
 	for _, cell := range row {
-		norm := domain.NormalizeHeader(cell)
+		norm := helper.NormalizeHeader(cell)
 		if norm == "" {
 			continue
 		}
@@ -59,17 +61,17 @@ func scoreHeaderRow(row []string) float64 {
 	if filled == 0 {
 		return 0
 	}
-	return total / float64(len(domain.TemplateFields))
+	return total / float64(len(dto.TemplateFields))
 }
 
 // matchField returns the template field that best matches a normalised header
 // and its score.
-func matchField(normHeader string) (domain.QuestionField, float64) {
+func matchField(normHeader string) (model.QuestionField, float64) {
 	var (
-		best      domain.QuestionField
+		best      model.QuestionField
 		bestScore float64
 	)
-	for _, tf := range domain.TemplateFields {
+	for _, tf := range dto.TemplateFields {
 		for _, alias := range tf.Aliases {
 			score := fuzzy.Ratio(normHeader, alias)
 			if cs := fuzzy.Contains(normHeader, alias); cs > score {
@@ -90,7 +92,7 @@ func matchField(normHeader string) (domain.QuestionField, float64) {
 // used at most once. That matters for files carrying both "Assessor Remark"
 // and "Assessor Feedback": scoring each column independently would let both
 // claim the same field, whereas resolving globally gives each its own.
-func AutoMap(g *Grid, headerRow int) (*domain.ColumnMapping, []HeaderCandidate) {
+func AutoMap(g *dto.Grid, headerRow int) (*model.ColumnMapping, []dto.HeaderCandidate) {
 	headers := make([]string, 0, g.Width())
 	if headerRow >= 0 && headerRow < len(g.Rows) {
 		headers = append(headers, g.Rows[headerRow]...)
@@ -98,16 +100,16 @@ func AutoMap(g *Grid, headerRow int) (*domain.ColumnMapping, []HeaderCandidate) 
 
 	type pair struct {
 		col   int
-		field domain.QuestionField
+		field model.QuestionField
 		score float64
 	}
 	var pairs []pair
 	for col, h := range headers {
-		norm := domain.NormalizeHeader(h)
+		norm := helper.NormalizeHeader(h)
 		if norm == "" || len(norm) > 80 {
 			continue
 		}
-		for _, tf := range domain.TemplateFields {
+		for _, tf := range dto.TemplateFields {
 			for _, alias := range tf.Aliases {
 				score := fuzzy.Ratio(norm, alias)
 				if cs := fuzzy.Contains(norm, alias); cs > score {
@@ -128,10 +130,10 @@ func AutoMap(g *Grid, headerRow int) (*domain.ColumnMapping, []HeaderCandidate) 
 		return pairs[i].col < pairs[j].col
 	})
 
-	mapping := &domain.ColumnMapping{
+	mapping := &model.ColumnMapping{
 		SheetName: g.SheetName,
 		HeaderRow: headerRow,
-		Bindings:  map[domain.QuestionField]domain.ColumnBinding{},
+		Bindings:  map[model.QuestionField]model.ColumnBinding{},
 	}
 	usedCol := map[int]bool{}
 	best := map[int]pair{} // best accepted pair per column, for the UI
@@ -143,7 +145,7 @@ func AutoMap(g *Grid, headerRow int) (*domain.ColumnMapping, []HeaderCandidate) 
 		if _, taken := mapping.Bindings[p.field]; taken {
 			continue
 		}
-		mapping.Bindings[p.field] = domain.ColumnBinding{
+		mapping.Bindings[p.field] = model.ColumnBinding{
 			Field:      p.field,
 			Index:      p.col,
 			Header:     strings.TrimSpace(headers[p.col]),
@@ -153,9 +155,9 @@ func AutoMap(g *Grid, headerRow int) (*domain.ColumnMapping, []HeaderCandidate) 
 		best[p.col] = p
 	}
 
-	candidates := make([]HeaderCandidate, 0, len(headers))
+	candidates := make([]dto.HeaderCandidate, 0, len(headers))
 	for col, h := range headers {
-		c := HeaderCandidate{Index: col, Header: strings.TrimSpace(h)}
+		c := dto.HeaderCandidate{Index: col, Header: strings.TrimSpace(h)}
 		if p, ok := best[col]; ok {
 			c.Suggested, c.Confidence = p.field, p.score
 		}
@@ -171,7 +173,7 @@ func AutoMap(g *Grid, headerRow int) (*domain.ColumnMapping, []HeaderCandidate) 
 // header matching found none. It scores columns by how much prose they carry
 // below the header, since a question column is long text repeated on most rows.
 // Returning a guess the user can correct beats refusing the upload outright.
-func FallbackQuestionColumn(g *Grid, headerRow int) (int, bool) {
+func FallbackQuestionColumn(g *dto.Grid, headerRow int) (int, bool) {
 	if g.Width() == 0 {
 		return 0, false
 	}

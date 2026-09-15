@@ -5,13 +5,13 @@ import (
 	"log/slog"
 
 	"third-party-review/internal/config"
-	"third-party-review/internal/domain"
+	"third-party-review/internal/service"
 )
 
 // New constructs the AIReviewer named by configuration. This is the only place
 // that knows which providers exist; everything above it works through the
-// domain.AIReviewer interface.
-func New(cfg config.AI, log *slog.Logger) (domain.AIReviewer, error) {
+// service.AIReviewer interface.
+func New(cfg config.AI, log *slog.Logger) (service.AIReviewer, error) {
 	switch cfg.Provider {
 	case config.ProviderOpenAICompat:
 		log.Info("AI provider configured", "provider", cfg.Provider, "model", cfg.Model, "base_url", cfg.BaseURL)

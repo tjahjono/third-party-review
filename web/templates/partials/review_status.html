@@ -21,9 +21,9 @@
         <span class="text-secondary">{{ .DoneQuestions }} of {{ .TotalQuestions }} answers</span>
       </div>
       <div class="progress" role="progressbar" aria-label="Review progress"
-           aria-valuenow="{{ .Percent }}" aria-valuemin="0" aria-valuemax="100" style="height: .5rem;">
+           aria-valuenow="{{ jobPercent . }}" aria-valuemin="0" aria-valuemax="100" style="height: .5rem;">
         <div class="progress-bar progress-bar-striped progress-bar-animated"
-             style="width: {{ .Percent }}%"></div>
+             style="width: {{ jobPercent . }}%"></div>
       </div>
       {{ if gt .FailedQuestions 0 }}
       <p class="text-secondary small mt-2 mb-0">

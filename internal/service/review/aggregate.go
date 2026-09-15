@@ -7,7 +7,11 @@ import (
 	"math"
 	"sort"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 // worstCaseWeight controls how much the worst answers pull the aggregate away
@@ -22,26 +26,26 @@ const (
 	worstCaseWeight  = 0.6
 	worstQuintile    = 0.2
 	minWorstSampleN  = 1
-	flaggedThreshold = domain.RiskScore(4)
+	flaggedThreshold = model.RiskScore(4)
 )
 
 // Aggregate computes per-domain and assessment-level scores from the latest
 // result per question. Scoring lives in Go rather than in the model so the
 // numbers are deterministic, explainable and identical across providers.
-func Aggregate(questions []*domain.Question, results map[int64]*domain.ReviewResult) *domain.AssessmentSummary {
-	summary := &domain.AssessmentSummary{QuestionCount: len(questions)}
+func Aggregate(questions []*model.Question, results map[uuid.UUID]*model.ReviewResult) *model.AssessmentSummary {
+	summary := &model.AssessmentSummary{QuestionCount: len(questions)}
 
 	type bucket struct {
 		name       string
 		sortOrder  int
-		scores     []domain.RiskScore
+		scores     []model.RiskScore
 		flagged    int
 		incomplete int
 		total      int
 	}
-	buckets := map[int64]*bucket{}
+	buckets := map[uuid.UUID]*bucket{}
 
-	var allScores []domain.RiskScore
+	var allScores []model.RiskScore
 
 	for _, q := range questions {
 		b, ok := buckets[q.DomainID]
@@ -52,9 +56,9 @@ func Aggregate(questions []*domain.Question, results map[int64]*domain.ReviewRes
 		b.total++
 
 		switch q.ReviewStatus {
-		case domain.ReviewFinalized:
+		case model.ReviewFinalized:
 			summary.FinalizedCount++
-		case domain.ReviewAIDrafted:
+		case model.ReviewAIDrafted:
 			summary.PendingFinalization++
 		}
 
@@ -62,7 +66,7 @@ func Aggregate(questions []*domain.Question, results map[int64]*domain.ReviewRes
 		if r == nil {
 			continue
 		}
-		if r.RiskScore.Valid() {
+		if helper.ValidRiskScore(r.RiskScore) {
 			b.scores = append(b.scores, r.RiskScore)
 			allScores = append(allScores, r.RiskScore)
 			summary.ScoredCount++
@@ -74,7 +78,7 @@ func Aggregate(questions []*domain.Question, results map[int64]*domain.ReviewRes
 			b.flagged++
 			summary.FlaggedCount++
 		}
-		if r.Completeness.Incomplete() {
+		if helper.Incomplete(r.Completeness) {
 			b.incomplete++
 			summary.IncompleteCount++
 		}
@@ -83,7 +87,7 @@ func Aggregate(questions []*domain.Question, results map[int64]*domain.ReviewRes
 	// Preserve the seeded domain ordering where it is known; questions carry
 	// it implicitly through the order the repository returns them in.
 	order := 0
-	seen := map[int64]bool{}
+	seen := map[uuid.UUID]bool{}
 	for _, q := range questions {
 		if !seen[q.DomainID] {
 			seen[q.DomainID] = true
@@ -95,7 +99,7 @@ func Aggregate(questions []*domain.Question, results map[int64]*domain.ReviewRes
 	}
 
 	for id, b := range buckets {
-		ds := domain.DomainScore{
+		ds := model.DomainScore{
 			DomainID:        id,
 			DomainName:      b.name,
 			SortOrder:       b.sortOrder,
@@ -107,7 +111,7 @@ func Aggregate(questions []*domain.Question, results map[int64]*domain.ReviewRes
 		ds.MeanScore, ds.WorstScore, ds.WeightedScore = blend(b.scores)
 		summary.DomainScores = append(summary.DomainScores, ds)
 	}
-	domain.SortDomainScores(summary.DomainScores)
+	helper.SortDomainScores(summary.DomainScores)
 
 	summary.MeanScore, _, summary.OverallScore = blend(allScores)
 	return summary
@@ -115,7 +119,7 @@ func Aggregate(questions []*domain.Question, results map[int64]*domain.ReviewRes
 
 // blend returns the mean, the worst score, and the weighted worst-case
 // aggregate for a set of scores.
-func blend(scores []domain.RiskScore) (mean float64, worst domain.RiskScore, weighted float64) {
+func blend(scores []model.RiskScore) (mean float64, worst model.RiskScore, weighted float64) {
 	if len(scores) == 0 {
 		return 0, 0, 0
 	}
@@ -129,7 +133,7 @@ func blend(scores []domain.RiskScore) (mean float64, worst domain.RiskScore, wei
 	mean = float64(sum) / float64(len(scores))
 
 	// Mean of the worst quintile (at least one answer).
-	sorted := make([]domain.RiskScore, len(scores))
+	sorted := make([]model.RiskScore, len(scores))
 	copy(sorted, scores)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] > sorted[j] })
 
@@ -155,10 +159,10 @@ func blend(scores []domain.RiskScore) (mean float64, worst domain.RiskScore, wei
 
 // TopFindings returns the highest-risk results, newest scoring first, capped
 // at limit. Used to keep the narrative request inside the context window.
-func TopFindings(questions []*domain.Question, results map[int64]*domain.ReviewResult, limit int) []domain.SummaryFinding {
+func TopFindings(questions []*model.Question, results map[uuid.UUID]*model.ReviewResult, limit int) []dto.SummaryFinding {
 	type scored struct {
-		f     domain.SummaryFinding
-		score domain.RiskScore
+		f     dto.SummaryFinding
+		score model.RiskScore
 		flags int
 	}
 	var all []scored
@@ -167,14 +171,14 @@ func TopFindings(questions []*domain.Question, results map[int64]*domain.ReviewR
 		if r == nil {
 			continue
 		}
-		f := domain.SummaryFinding{
+		f := dto.SummaryFinding{
 			Domain:       q.DomainName,
 			Question:     q.QuestionText,
 			RiskScore:    r.RiskScore,
 			Completeness: r.Completeness,
 		}
 		for _, fl := range r.Flags {
-			f.Flags = append(f.Flags, fl.Kind.Label())
+			f.Flags = append(f.Flags, helper.FlagKindLabel(fl.Kind))
 		}
 		all = append(all, scored{f: f, score: r.RiskScore, flags: len(r.Flags)})
 	}
@@ -187,7 +191,7 @@ func TopFindings(questions []*domain.Question, results map[int64]*domain.ReviewR
 	if limit > 0 && len(all) > limit {
 		all = all[:limit]
 	}
-	out := make([]domain.SummaryFinding, 0, len(all))
+	out := make([]dto.SummaryFinding, 0, len(all))
 	for _, s := range all {
 		out = append(out, s.f)
 	}

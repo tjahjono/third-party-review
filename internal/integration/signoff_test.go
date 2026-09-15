@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 )
 
 // TestSignOffFlow walks the human half of the workflow: edit a draft, sign it,
@@ -35,7 +36,7 @@ func TestSignOffFlow(t *testing.T) {
 	if signed.AssessorFeedbackDraft != originalDraft {
 		t.Error("signing off overwrote the AI draft")
 	}
-	if signed.ReviewStatus != domain.ReviewFinalized {
+	if signed.ReviewStatus != model.ReviewFinalized {
 		t.Errorf("status = %s, want finalized", signed.ReviewStatus)
 	}
 	if signed.LatestResult == nil {
@@ -44,7 +45,7 @@ func TestSignOffFlow(t *testing.T) {
 
 	// Empty feedback is refused: a signed finding with no words in it is worse
 	// than an unsigned one, because it reads as reviewed.
-	if _, err := env.Assess.FinalizeQuestion(ctx, first.ID, "   ", nil); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, err := env.Assess.FinalizeQuestion(ctx, first.ID, "   ", nil); !errors.Is(err, helper.ErrInvalidInput) {
 		t.Errorf("blank feedback error = %v, want invalid input", err)
 	}
 
@@ -68,7 +69,7 @@ func TestSignOffFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReopenQuestion: %v", err)
 	}
-	if reopened.ReviewStatus != domain.ReviewAIDrafted {
+	if reopened.ReviewStatus != model.ReviewAIDrafted {
 		t.Errorf("status after reopening = %s, want ai_drafted", reopened.ReviewStatus)
 	}
 	if reopened.AssessorFeedbackFinal != edited {
@@ -133,7 +134,7 @@ func TestBulkFinalizeSkipsQuestionsWithNoDraft(t *testing.T) {
 	}
 
 	q, _ := env.Repos.Questions.GetByID(ctx, questions[0].ID)
-	if q.ReviewStatus == domain.ReviewFinalized {
+	if q.ReviewStatus == model.ReviewFinalized {
 		t.Error("a question with no draft was signed off with empty feedback")
 	}
 
@@ -175,7 +176,7 @@ func TestBulkFinalizeScopedToOneDomain(t *testing.T) {
 	for _, q := range questions {
 		reloaded, _ := env.Repos.Questions.GetByID(ctx, q.ID)
 		wantFinal := q.DomainID == target
-		gotFinal := reloaded.ReviewStatus == domain.ReviewFinalized
+		gotFinal := reloaded.ReviewStatus == model.ReviewFinalized
 		if gotFinal != wantFinal {
 			t.Errorf("question in domain %d finalized = %v, want %v", q.DomainID, gotFinal, wantFinal)
 		}
@@ -194,7 +195,7 @@ func TestCloseAndReopenAssessment(t *testing.T) {
 
 	// Closing with work outstanding is refused, and the message says how much.
 	err := env.Assess.CloseAssessment(ctx, assessmentID)
-	if !errors.Is(err, domain.ErrInvalidInput) {
+	if !errors.Is(err, helper.ErrInvalidInput) {
 		t.Fatalf("close error = %v, want invalid input", err)
 	}
 	if !strings.Contains(err.Error(), "sign-off") {
@@ -212,20 +213,20 @@ func TestCloseAndReopenAssessment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if a.Status != domain.StatusClosed || a.ClosedAt == nil {
+	if a.Status != model.StatusClosed || a.ClosedAt == nil {
 		t.Errorf("status = %s, closed_at = %v", a.Status, a.ClosedAt)
 	}
 
 	// The stored upload has served its purpose; the questions are the record.
-	if _, err := env.Repos.Assessments.GetUpload(ctx, assessmentID); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := env.Repos.Uploads.Get(ctx, assessmentID); !errors.Is(err, helper.ErrNotFound) {
 		t.Errorf("the upload should be discarded on close, got %v", err)
 	}
 
 	// A closed assessment is the signed record and cannot be edited.
-	if _, err := env.Assess.FinalizeQuestion(ctx, questions[0].ID, "changed", nil); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, err := env.Assess.FinalizeQuestion(ctx, questions[0].ID, "changed", nil); !errors.Is(err, helper.ErrInvalidInput) {
 		t.Errorf("editing a closed assessment error = %v, want invalid input", err)
 	}
-	if _, err := env.Assess.ReopenQuestion(ctx, questions[0].ID); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, err := env.Assess.ReopenQuestion(ctx, questions[0].ID); !errors.Is(err, helper.ErrInvalidInput) {
 		t.Errorf("reopening a question in a closed assessment error = %v, want invalid input", err)
 	}
 	if _, err := env.Review.Enqueue(ctx, assessmentID); err == nil {

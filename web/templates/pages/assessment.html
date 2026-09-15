@@ -12,7 +12,7 @@
     </p>
   </div>
   <div class="d-flex flex-wrap align-items-center gap-2">
-    <span class="{{ statusBadge $a.Status }}">{{ $a.Status.Label }}</span>
+    <span class="{{ statusBadge $a.Status }}">{{ statusLabel $a.Status }}</span>
     {{ if and $a.ColumnMapping (not $d.Closed) }}
       <a class="btn btn-outline-secondary btn-sm" href="/assessments/{{ $a.ID }}/mapping">Re-map columns</a>
     {{ end }}
@@ -21,6 +21,25 @@
     {{ end }}
   </div>
 </div>
+
+{{/* The mock reviewer is the default so the app runs with no API key, but its
+     output is four canned sentences with the domain name swapped in. Left
+     unlabelled it looks exactly like a real model repeating itself, so say so
+     loudly wherever its results are shown. */}}
+{{ if and $d.Job (eq $d.Job.Provider "mock") }}
+<div class="alert alert-warning d-flex gap-3 align-items-start" role="alert">
+  <span class="badge text-bg-warning flex-shrink-0 mt-1">MOCK</span>
+  <div>
+    <strong class="d-block">These results did not come from a model.</strong>
+    <div class="small mt-1">
+      <code>AI_PROVIDER=mock</code> is set, so the offline stub reviewer produced them. It applies
+      a handful of keyword rules and emits one of four fixed sentences, which is why every answer
+      reads the same. Set <code>AI_PROVIDER</code>, <code>AI_BASE_URL</code>, <code>AI_API_KEY</code>
+      and <code>AI_MODEL</code> in <code>.env</code>, restart, then re-run the review.
+    </div>
+  </div>
+</div>
+{{ end }}
 
 {{ if $d.Questions }}
 <div class="card mb-4">
@@ -40,7 +59,7 @@
           Every draft needs a human sign-off.
         </p>
       </div>
-      {{ if and $a.Status.CanStartReview (not $d.Closed) }}
+      {{ if and (canStartReview $a.Status) (not $d.Closed) }}
       <button class="btn btn-primary"
               hx-post="/assessments/{{ $a.ID }}/review"
               hx-target="#review-status"

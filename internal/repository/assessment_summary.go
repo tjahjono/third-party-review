@@ -1,20 +1,33 @@
-package postgres
+package repository
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 
-	"third-party-review/internal/domain"
+	"github.com/google/uuid"
+
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 )
 
-// SummaryRepo is the PostgreSQL implementation of domain.SummaryRepository.
-type SummaryRepo struct{ db *DB }
+type AssessmentSummaryRepository interface {
+	Upsert(ctx context.Context, s *model.AssessmentSummary) error
+	GetByAssessment(ctx context.Context, assessmentID uuid.UUID) (*model.AssessmentSummary, error)
+}
 
-func (r *SummaryRepo) Upsert(ctx context.Context, s *domain.AssessmentSummary) error {
+type assessmentSummaryRepository struct {
+	db helper.ConnProvider
+}
+
+func NewAssessmentSummaryRepository(db helper.ConnProvider) AssessmentSummaryRepository {
+	return &assessmentSummaryRepository{db: db}
+}
+
+func (r *assessmentSummaryRepository) Upsert(ctx context.Context, s *model.AssessmentSummary) error {
 	scores, err := json.Marshal(s.DomainScores)
 	if err != nil {
-		return fmt.Errorf("postgres: encode domain_scores: %w", err)
+		return fmt.Errorf("repository: encode domain_scores: %w", err)
 	}
 	if s.DomainScores == nil {
 		scores = []byte("[]")
@@ -40,40 +53,38 @@ func (r *SummaryRepo) Upsert(ctx context.Context, s *domain.AssessmentSummary) e
 			narrative = EXCLUDED.narrative,
 			generated_at = now()
 		RETURNING generated_at`
-	err = r.db.q(ctx).QueryRow(ctx, stmt,
+	err = r.db.Querier(ctx).QueryRow(ctx, stmt,
 		s.AssessmentID, s.RunID, s.QuestionCount, s.ScoredCount, s.OverallScore,
 		s.MeanScore, int(s.WorstScore), s.FlaggedCount, s.IncompleteCount,
 		s.PendingFinalization, s.FinalizedCount, scores, s.Narrative,
 	).Scan(&s.GeneratedAt)
-	return mapErr(err)
+	return helper.MapErr(err)
 }
 
-func (r *SummaryRepo) GetByAssessment(ctx context.Context, assessmentID int64) (*domain.AssessmentSummary, error) {
+func (r *assessmentSummaryRepository) GetByAssessment(ctx context.Context, assessmentID uuid.UUID) (*model.AssessmentSummary, error) {
 	const stmt = `
 		SELECT assessment_id, run_id, question_count, scored_count, overall_score,
 		       mean_score, worst_score, flagged_count, incomplete_count,
 		       pending_finalization, finalized_count, domain_scores, narrative, generated_at
 		  FROM assessment_summaries WHERE assessment_id = $1`
 	var (
-		s      domain.AssessmentSummary
+		s      model.AssessmentSummary
 		scores []byte
 		worst  int
 	)
-	err := r.db.q(ctx).QueryRow(ctx, stmt, assessmentID).Scan(
+	err := r.db.Querier(ctx).QueryRow(ctx, stmt, assessmentID).Scan(
 		&s.AssessmentID, &s.RunID, &s.QuestionCount, &s.ScoredCount, &s.OverallScore,
 		&s.MeanScore, &worst, &s.FlaggedCount, &s.IncompleteCount,
 		&s.PendingFinalization, &s.FinalizedCount, &scores, &s.Narrative, &s.GeneratedAt)
 	if err != nil {
-		return nil, mapErr(err)
+		return nil, helper.MapErr(err)
 	}
-	s.WorstScore = domain.RiskScore(worst)
+	s.WorstScore = model.RiskScore(worst)
 	if len(scores) > 0 {
 		if err := json.Unmarshal(scores, &s.DomainScores); err != nil {
-			return nil, fmt.Errorf("postgres: decode domain_scores for assessment %d: %w", assessmentID, err)
+			return nil, fmt.Errorf("repository: decode domain_scores for assessment %s: %w", assessmentID, err)
 		}
 	}
-	domain.SortDomainScores(s.DomainScores)
+	helper.SortDomainScores(s.DomainScores)
 	return &s, nil
 }
-
-var _ domain.SummaryRepository = (*SummaryRepo)(nil)

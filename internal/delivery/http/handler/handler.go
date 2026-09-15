@@ -16,47 +16,61 @@ import (
 	"time"
 
 	"third-party-review/internal/delivery/http/middleware"
-	"third-party-review/internal/domain"
-	"third-party-review/internal/service/assessment"
-	"third-party-review/internal/service/auth"
-	"third-party-review/internal/service/parser"
-	"third-party-review/internal/service/review"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+	"third-party-review/internal/service"
+
+	"github.com/google/uuid"
 )
 
-// Handler holds the shared dependencies of every HTTP handler.
+// Step 3 - Implement the Struct and its Methods.
+//
+// The fields are unexported: once the handler set is constructed, nothing can
+// reach in and replace a service on a running server.
 type Handler struct {
-	Assessments *assessment.Service
-	Reviews     *review.Service
-	Auth        *auth.Service
-	Templates   *Renderer
-	SessionTTL  time.Duration
-	Log         *slog.Logger
+	assessments service.AssessmentFacade
+	reviews     service.ReviewService
+	auth        service.AuthService
+	templates   *Renderer
+	sessionTTL  time.Duration
+	log         *slog.Logger
 }
 
-// Deps is what the main package injects into the handler set.
-type Deps struct {
-	Assessments *assessment.Service
-	Reviews     *review.Service
-	Auth        *auth.Service
-	Templates   *Renderer
-	SessionTTL  time.Duration
-	Log         *slog.Logger
-}
-
-// New constructs the handler set.
-func New(d Deps) *Handler {
-	if d.SessionTTL <= 0 {
-		d.SessionTTL = 12 * time.Hour
+// Step 4 - Constructor ensuring the dependency is injected.
+//
+// New returns an error rather than accepting a half-built Deps, so a wiring
+// mistake fails at startup naming the missing dependency instead of panicking
+// on whichever request reaches it first.
+func New(d Deps) (*Handler, error) {
+	if err := d.validate(); err != nil {
+		return nil, err
+	}
+	ttl := d.SessionTTL
+	if ttl <= 0 {
+		ttl = defaultSessionTTL
 	}
 	return &Handler{
-		Assessments: d.Assessments,
-		Reviews:     d.Reviews,
-		Auth:        d.Auth,
-		Templates:   d.Templates,
-		SessionTTL:  d.SessionTTL,
-		Log:         d.Log,
-	}
+		assessments: d.Assessments,
+		reviews:     d.Reviews,
+		auth:        d.Auth,
+		templates:   d.Templates,
+		sessionTTL:  ttl,
+		log:         d.Log,
+	}, nil
 }
+
+// MustNew is New for wiring that cannot meaningfully recover, such as a test
+// fixture.
+func MustNew(d Deps) *Handler {
+	h, err := New(d)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
+
+// defaultSessionTTL applies when none is configured.
+const defaultSessionTTL = 12 * time.Hour
 
 // ---------------------------------------------------------------------------
 // Template rendering
@@ -137,10 +151,10 @@ type pageData struct {
 	Flash   string
 	Error   string
 	Data    any
-	Domains []*domain.AssessmentDomain
+	Domains []*model.AssessmentDomain
 
 	// User is the signed-in reviewer, used by the layout's header.
-	User *domain.User
+	User *model.User
 	// CSRFToken is embedded in every mutating form on the page.
 	CSRFToken string
 }
@@ -156,8 +170,8 @@ func (h *Handler) renderPage(w http.ResponseWriter, r *http.Request, status int,
 		data.CSRFToken = middleware.CSRFTokenFrom(r.Context())
 	}
 	var buf strings.Builder
-	if err := h.Templates.Page(&buf, name, data); err != nil {
-		h.Log.Error("template render failed", "page", name, "error", err, "path", r.URL.Path)
+	if err := h.templates.Page(&buf, name, data); err != nil {
+		h.log.Error("template render failed", "page", name, "error", err, "path", r.URL.Path)
 		http.Error(w, "Something went wrong rendering this page.", http.StatusInternalServerError)
 		return
 	}
@@ -169,8 +183,8 @@ func (h *Handler) renderPage(w http.ResponseWriter, r *http.Request, status int,
 // renderPartial writes a partial, used for HTMX swaps.
 func (h *Handler) renderPartial(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
 	var buf strings.Builder
-	if err := h.Templates.Partial(&buf, name, data); err != nil {
-		h.Log.Error("partial render failed", "partial", name, "error", err, "path", r.URL.Path)
+	if err := h.templates.Partial(&buf, name, data); err != nil {
+		h.log.Error("partial render failed", "partial", name, "error", err, "path", r.URL.Path)
 		http.Error(w, "Something went wrong rendering this section.", http.StatusInternalServerError)
 		return
 	}
@@ -183,7 +197,7 @@ func (h *Handler) renderPartial(w http.ResponseWriter, r *http.Request, status i
 type errorView struct {
 	Message string
 	Hint    string
-	Fields  []domain.ValidationError
+	Fields  []helper.ValidationError
 }
 
 // fail renders a user-facing error. Validation and parse problems become a 422
@@ -192,26 +206,26 @@ type errorView struct {
 // the browser.
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, domain.ErrNotFound):
+	case errors.Is(err, helper.ErrNotFound):
 		h.renderPartial(w, r, http.StatusNotFound, "error", errorView{
 			Message: "That record no longer exists.",
 			Hint:    "It may have been deleted in another tab.",
 		})
 		return
 
-	case errors.Is(err, domain.ErrInvalidInput):
+	case errors.Is(err, helper.ErrInvalidInput):
 		view := errorView{Message: err.Error()}
 
-		var pe *parser.ParseError
+		var pe *helper.ParseError
 		if errors.As(err, &pe) {
 			view.Message, view.Hint = pe.Message, pe.Hint
 		}
-		var ve domain.ValidationError
+		var ve helper.ValidationError
 		if errors.As(err, &ve) {
 			view.Message = ve.Message
-			view.Fields = []domain.ValidationError{ve}
+			view.Fields = []helper.ValidationError{ve}
 		}
-		var ves domain.ValidationErrors
+		var ves helper.ValidationErrors
 		if errors.As(err, &ves) {
 			view.Message = "Please correct the highlighted fields."
 			view.Fields = ves
@@ -219,7 +233,7 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		h.renderPartial(w, r, http.StatusUnprocessableEntity, "error", view)
 		return
 
-	case errors.Is(err, domain.ErrAlreadyExists):
+	case errors.Is(err, helper.ErrAlreadyExists):
 		h.renderPartial(w, r, http.StatusConflict, "error", errorView{
 			Message: "That already exists.",
 			Hint:    "Choose a different name.",
@@ -227,7 +241,7 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 
-	h.Log.Error("request failed", "path", r.URL.Path, "method", r.Method, "error", err)
+	h.log.Error("request failed", "path", r.URL.Path, "method", r.Method, "error", err)
 	h.renderPartial(w, r, http.StatusInternalServerError, "error", errorView{
 		Message: "Something went wrong on our side.",
 		Hint:    "The details were written to the server log.",
@@ -249,12 +263,16 @@ func (h *Handler) redirect(w http.ResponseWriter, r *http.Request, url string) {
 // Request parsing helpers
 // ---------------------------------------------------------------------------
 
-// pathInt reads a positive integer path parameter.
-func pathInt(r *http.Request, name string) (int64, error) {
-	raw := chiURLParam(r, name)
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id <= 0 {
-		return 0, domain.ValidationError{Field: name, Message: "That link is malformed."}
+// pathID reads a uuid path parameter.
+//
+// A malformed id is a ValidationError rather than a 404: the request never
+// identified a record, so the honest answer is that the link is wrong, not
+// that the thing it points at is missing.
+func pathID(r *http.Request, name string) (uuid.UUID, error) {
+	raw := strings.TrimSpace(chiURLParam(r, name))
+	id, err := uuid.Parse(raw)
+	if err != nil || id == uuid.Nil {
+		return uuid.Nil, helper.ValidationError{Field: name, Message: "That link is malformed."}
 	}
 	return id, nil
 }
@@ -268,11 +286,11 @@ func formInt(r *http.Request, name string, def int) int {
 	return v
 }
 
-// formInt64 reads an int64 form value.
-func formInt64(r *http.Request, name string) (int64, bool) {
-	v, err := strconv.ParseInt(strings.TrimSpace(r.FormValue(name)), 10, 64)
-	if err != nil {
-		return 0, false
+// formID reads a uuid form value.
+func formID(r *http.Request, name string) (uuid.UUID, bool) {
+	v, err := uuid.Parse(strings.TrimSpace(r.FormValue(name)))
+	if err != nil || v == uuid.Nil {
+		return uuid.Nil, false
 	}
 	return v, true
 }

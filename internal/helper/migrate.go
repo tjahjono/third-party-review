@@ -1,4 +1,4 @@
-package postgres
+package helper
 
 import (
 	"embed"
@@ -14,8 +14,8 @@ import (
 )
 
 // MigrationsFS is set by the main package to the embedded migrations
-// directory. Keeping the embed in cmd/server means this package has no
-// compile-time dependency on the repository layout.
+// directory. Keeping the embed here means the repository layer has no
+// compile-time dependency on it.
 type MigrationsFS = embed.FS
 
 // Migrate applies every pending migration in fsys against the pool's database.

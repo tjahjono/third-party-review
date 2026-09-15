@@ -15,18 +15,20 @@ import (
 	"github.com/xuri/excelize/v2"
 
 	"third-party-review/internal/config"
-	"third-party-review/internal/domain"
-	"third-party-review/internal/repository/postgres"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/repository"
+	"third-party-review/internal/service"
 	"third-party-review/internal/service/assessment"
 	"third-party-review/internal/service/auth"
+	"third-party-review/internal/service/parser"
 	"third-party-review/internal/service/review"
 	"third-party-review/migrations"
 )
 
 // testEnv bundles everything a test needs, wired the same way main.go wires it.
 type testEnv struct {
-	DB       *postgres.DB
-	Repos    *domain.Repositories
+	DB       *helper.DB
+	Repos    *repository.Repositories
 	Assess   *assessment.Service
 	Review   *review.Service
 	Auth     *auth.Service
@@ -35,7 +37,7 @@ type testEnv struct {
 }
 
 // mockReviewerHolder lets a test swap reviewer behaviour between runs.
-type mockReviewerHolder struct{ domain.AIReviewer }
+type mockReviewerHolder struct{ service.AIReviewer }
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
@@ -48,7 +50,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	ctx := context.Background()
 
-	db, err := postgres.Connect(ctx, config.DB{
+	db, err := helper.Connect(ctx, config.DB{
 		DSN: dsn, MaxConns: 5, MinConns: 1,
 		MaxConnLifetime: time.Hour, ConnectTimeout: 10 * time.Second,
 	})
@@ -57,20 +59,22 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	t.Cleanup(db.Close)
 
-	if err := postgres.Migrate(db.Pool(), migrations.FS, ".", log); err != nil {
+	if err := helper.Migrate(db.Pool(), migrations.FS, ".", log); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	repos := db.Repositories()
+	repos := repository.NewRepositories(db)
 	aiCfg := config.AI{Provider: config.ProviderMock, Model: "mock", BatchSize: 3, MaxConcurrency: 1}
 	reviewer := &mockReviewerHolder{AIReviewer: newMock()}
 
 	return &testEnv{
-		DB:       db,
-		Repos:    repos,
-		Assess:   assessment.New(repos, log),
-		Review:   review.New(repos, reviewer, aiCfg, log),
-		Auth:     auth.New(repos.Users, repos.Sessions, time.Hour, log),
+		DB:    db,
+		Repos: repos,
+		// MustNew rather than New: a wiring mistake in a fixture should stop
+		// the test run immediately, not be handled.
+		Assess:   assessment.MustNew(assessment.FromRepositories(repos, parser.New(), log)),
+		Review:   review.MustNew(review.FromRepositories(repos, reviewer, aiCfg, log)),
+		Auth:     auth.MustNew(auth.FromRepositories(repos, time.Hour, log)),
 		Reviewer: reviewer,
 		Log:      log,
 	}

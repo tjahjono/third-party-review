@@ -11,6 +11,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/xuri/excelize/v2"
+
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
 )
 
 // maxRows caps how much of a file is read. A TPSA questionnaire is hundreds of
@@ -20,13 +23,13 @@ const maxRows = 20000
 // ReadGrid reads an uploaded file into a Grid, choosing the reader from the
 // filename extension and falling back to content sniffing when the extension
 // is missing or wrong.
-func ReadGrid(r io.Reader, filename string) (*Grid, error) {
+func ReadGrid(r io.Reader, filename string) (*dto.Grid, error) {
 	data, err := io.ReadAll(io.LimitReader(r, 200<<20))
 	if err != nil {
-		return nil, parseErr("Couldn't read the uploaded file.", "Try uploading it again.", err)
+		return nil, helper.NewParseError("Couldn't read the uploaded file.", "Try uploading it again.", err)
 	}
 	if len(data) == 0 {
-		return nil, parseErr("The uploaded file is empty.", "Check you selected the right file.", nil)
+		return nil, helper.NewParseError("The uploaded file is empty.", "Check you selected the right file.", nil)
 	}
 
 	switch strings.ToLower(filepath.Ext(filename)) {
@@ -43,7 +46,7 @@ func ReadGrid(r io.Reader, filename string) (*Grid, error) {
 	if utf8.Valid(data) {
 		return readCSV(data, "")
 	}
-	return nil, parseErr(
+	return nil, helper.NewParseError(
 		"Couldn't tell what kind of file this is.",
 		"Upload the questionnaire as .xlsx or .csv.", nil)
 }
@@ -52,10 +55,10 @@ func ReadGrid(r io.Reader, filename string) (*Grid, error) {
 // expanded so every covered cell carries the merged value: in a real TPSA
 // workbook a domain divider is usually a merged row, and a multi-row question
 // often merges its answer cell.
-func readExcel(data []byte) (*Grid, error) {
+func readExcel(data []byte) (*dto.Grid, error) {
 	f, err := excelize.OpenReader(bytes.NewReader(data))
 	if err != nil {
-		return nil, parseErr(
+		return nil, helper.NewParseError(
 			"Couldn't open that workbook.",
 			"Make sure it is a real .xlsx file and not renamed from another format.", err)
 	}
@@ -63,7 +66,7 @@ func readExcel(data []byte) (*Grid, error) {
 
 	names := f.GetSheetList()
 	if len(names) == 0 {
-		return nil, parseErr("The workbook has no worksheets.", "", nil)
+		return nil, helper.NewParseError("The workbook has no worksheets.", "", nil)
 	}
 
 	// Pick the sheet with the most populated rows rather than always the
@@ -83,10 +86,10 @@ func readExcel(data []byte) (*Grid, error) {
 		}
 	}
 	if bestFill == 0 {
-		return nil, parseErr("Every worksheet in that workbook is empty.", "", nil)
+		return nil, helper.NewParseError("Every worksheet in that workbook is empty.", "", nil)
 	}
 
-	grid := &Grid{SheetName: bestName, SheetNames: names, Rows: normalizeRows(bestRows)}
+	grid := &dto.Grid{SheetName: bestName, SheetNames: names, Rows: normalizeRows(bestRows)}
 	if err := expandMerged(f, bestName, grid); err != nil {
 		return nil, err
 	}
@@ -95,20 +98,20 @@ func readExcel(data []byte) (*Grid, error) {
 
 // ReadExcelSheet re-reads a specific worksheet, used when the user picks a
 // different sheet than the one auto-selected.
-func ReadExcelSheet(data []byte, sheet string) (*Grid, error) {
+func ReadExcelSheet(data []byte, sheet string) (*dto.Grid, error) {
 	f, err := excelize.OpenReader(bytes.NewReader(data))
 	if err != nil {
-		return nil, parseErr("Couldn't open that workbook.", "", err)
+		return nil, helper.NewParseError("Couldn't open that workbook.", "", err)
 	}
 	defer f.Close()
 
 	rows, err := f.GetRows(sheet)
 	if err != nil {
-		return nil, parseErr(
+		return nil, helper.NewParseError(
 			fmt.Sprintf("Couldn't read worksheet %q.", sheet),
 			"Pick a different sheet.", err)
 	}
-	grid := &Grid{SheetName: sheet, SheetNames: f.GetSheetList(), Rows: normalizeRows(rows)}
+	grid := &dto.Grid{SheetName: sheet, SheetNames: f.GetSheetList(), Rows: normalizeRows(rows)}
 	if err := expandMerged(f, sheet, grid); err != nil {
 		return nil, err
 	}
@@ -118,7 +121,7 @@ func ReadExcelSheet(data []byte, sheet string) (*Grid, error) {
 // expandMerged copies each merged region's value into every cell it covers.
 // excelize reports the value only in the top-left cell, which would otherwise
 // make a merged divider row look blank.
-func expandMerged(f *excelize.File, sheet string, g *Grid) error {
+func expandMerged(f *excelize.File, sheet string, g *dto.Grid) error {
 	merged, err := f.GetMergeCells(sheet)
 	if err != nil {
 		// A workbook without merge metadata is normal, not an error.
@@ -149,7 +152,7 @@ func expandMerged(f *excelize.File, sheet string, g *Grid) error {
 }
 
 // readCSV reads delimited text, auto-detecting comma, semicolon or tab.
-func readCSV(data []byte, ext string) (*Grid, error) {
+func readCSV(data []byte, ext string) (*dto.Grid, error) {
 	// Strip a UTF-8 BOM, which Excel writes when exporting CSV on Windows and
 	// which would otherwise corrupt the first header.
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
@@ -171,18 +174,18 @@ func readCSV(data []byte, ext string) (*Grid, error) {
 		if err != nil {
 			var pe *csv.ParseError
 			if errors.As(err, &pe) {
-				return nil, parseErr(
+				return nil, helper.NewParseError(
 					fmt.Sprintf("Couldn't parse line %d of the CSV.", pe.Line),
 					"Check for an unclosed quote on that line, or re-export the file as .xlsx.", err)
 			}
-			return nil, parseErr("Couldn't parse the CSV.", "Try re-exporting it as .xlsx.", err)
+			return nil, helper.NewParseError("Couldn't parse the CSV.", "Try re-exporting it as .xlsx.", err)
 		}
 		rows = append(rows, rec)
 	}
 	if countFilled(rows) == 0 {
-		return nil, parseErr("The file has no data rows.", "", nil)
+		return nil, helper.NewParseError("The file has no data rows.", "", nil)
 	}
-	return &Grid{Rows: normalizeRows(rows)}, nil
+	return &dto.Grid{Rows: normalizeRows(rows)}, nil
 }
 
 // detectDelimiter counts candidate separators on the first few non-empty lines

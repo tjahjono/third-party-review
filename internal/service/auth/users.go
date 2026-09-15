@@ -7,9 +7,11 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 )
 
 // minPasswordLength is the floor. Length is the only password rule enforced:
@@ -18,7 +20,7 @@ import (
 const minPasswordLength = 12
 
 // CreateUser adds a member of the internal team.
-func (s *Service) CreateUser(ctx context.Context, username, displayName, password string) (*domain.User, error) {
+func (s *Service) CreateUser(ctx context.Context, username, displayName, password string) (*model.User, error) {
 	username = strings.TrimSpace(username)
 	displayName = strings.TrimSpace(displayName)
 
@@ -37,14 +39,14 @@ func (s *Service) CreateUser(ctx context.Context, username, displayName, passwor
 		displayName = username
 	}
 
-	user := &domain.User{
+	user := &model.User{
 		Username:     username,
 		DisplayName:  displayName,
 		PasswordHash: string(hash),
 	}
 	if err := s.users.Create(ctx, user); err != nil {
-		if errors.Is(err, domain.ErrAlreadyExists) {
-			return nil, domain.ValidationError{Field: "username", Message: "That username is already taken."}
+		if errors.Is(err, helper.ErrAlreadyExists) {
+			return nil, helper.ValidationError{Field: "username", Message: "That username is already taken."}
 		}
 		return nil, err
 	}
@@ -53,13 +55,13 @@ func (s *Service) CreateUser(ctx context.Context, username, displayName, passwor
 }
 
 // ChangePassword updates a user's password after verifying the current one.
-func (s *Service) ChangePassword(ctx context.Context, userID int64, current, next string) error {
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, current, next string) error {
 	user, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(current)); err != nil {
-		return domain.ValidationError{Field: "current_password", Message: "That password is not correct."}
+		return helper.ValidationError{Field: "current_password", Message: "That password is not correct."}
 	}
 	if err := ValidatePassword(next, user.Username); err != nil {
 		return err
@@ -83,7 +85,7 @@ func (s *Service) UserCount(ctx context.Context) (int, error) {
 }
 
 // GetUser returns one account.
-func (s *Service) GetUser(ctx context.Context, id int64) (*domain.User, error) {
+func (s *Service) GetUser(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	return s.users.GetByID(ctx, id)
 }
 
@@ -113,14 +115,14 @@ func (s *Service) Bootstrap(ctx context.Context, username, password string) erro
 // validateUsername keeps usernames to a predictable shape.
 func validateUsername(username string) error {
 	if len(username) < 3 {
-		return domain.ValidationError{Field: "username", Message: "Username must be at least 3 characters."}
+		return helper.ValidationError{Field: "username", Message: "Username must be at least 3 characters."}
 	}
 	if len(username) > 64 {
-		return domain.ValidationError{Field: "username", Message: "Username must be 64 characters or fewer."}
+		return helper.ValidationError{Field: "username", Message: "Username must be 64 characters or fewer."}
 	}
 	for _, r := range username {
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '-' && r != '_' && r != '@' {
-			return domain.ValidationError{
+			return helper.ValidationError{
 				Field:   "username",
 				Message: "Username may contain letters, digits, and . - _ @ only.",
 			}
@@ -133,7 +135,7 @@ func validateUsername(username string) error {
 // choices that defeat it.
 func ValidatePassword(password, username string) error {
 	if len([]rune(password)) < minPasswordLength {
-		return domain.ValidationError{
+		return helper.ValidationError{
 			Field: "password",
 			Message: fmt.Sprintf(
 				"Password must be at least %d characters. A short phrase of a few words is easier to remember and harder to guess than a short complex string.",
@@ -143,15 +145,15 @@ func ValidatePassword(password, username string) error {
 	if len(password) > 256 {
 		// bcrypt silently truncates past 72 bytes; refuse rather than let a
 		// user believe a 300-character password is all being used.
-		return domain.ValidationError{Field: "password", Message: "Password must be 256 characters or fewer."}
+		return helper.ValidationError{Field: "password", Message: "Password must be 256 characters or fewer."}
 	}
 	lower := strings.ToLower(password)
 	if username != "" && strings.Contains(lower, strings.ToLower(username)) {
-		return domain.ValidationError{Field: "password", Message: "Password must not contain the username."}
+		return helper.ValidationError{Field: "password", Message: "Password must not contain the username."}
 	}
 	for _, bad := range []string{"password", "changeme", "letmein", "123456789012"} {
 		if strings.Contains(lower, bad) {
-			return domain.ValidationError{Field: "password", Message: "That password is too easy to guess. Choose something else."}
+			return helper.ValidationError{Field: "password", Message: "That password is too easy to guess. Choose something else."}
 		}
 	}
 	return nil

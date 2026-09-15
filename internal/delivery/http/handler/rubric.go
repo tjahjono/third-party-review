@@ -3,16 +3,18 @@ package handler
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 // AttachRubric saves a pasted or uploaded rubric and attaches it to the
 // assessment, so the next review compares answers against it.
 func (h *Handler) AttachRubric(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -37,15 +39,15 @@ func (h *Handler) AttachRubric(w http.ResponseWriter, r *http.Request) {
 		content = r.FormValue("content")
 	}
 	if name == "" {
-		name = "Rubric for assessment " + strconv.FormatInt(id, 10)
+		name = "Rubric for assessment " + uuidStr(id)
 	}
 
-	rubric := &domain.Rubric{
+	rubric := &model.Rubric{
 		Name:     name,
 		Content:  content,
 		Reusable: r.FormValue("reusable") == "on" || r.FormValue("reusable") == "1",
 	}
-	if err := h.Assessments.AttachRubric(r.Context(), id, rubric); err != nil {
+	if err := h.assessments.AttachRubric(r.Context(), id, rubric); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -55,12 +57,12 @@ func (h *Handler) AttachRubric(w http.ResponseWriter, r *http.Request) {
 // DetachRubric removes the rubric from an assessment. The rubric itself is
 // kept if it was marked reusable.
 func (h *Handler) DetachRubric(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if err := h.Assessments.DetachRubric(r.Context(), id); err != nil {
+	if err := h.assessments.DetachRubric(r.Context(), id); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -68,33 +70,33 @@ func (h *Handler) DetachRubric(w http.ResponseWriter, r *http.Request) {
 }
 
 type rubricView struct {
-	AssessmentID int64
-	Rubric       *domain.Rubric
-	Reusable     []*domain.Rubric
+	AssessmentID uuid.UUID
+	Rubric       *model.Rubric
+	Reusable     []*model.Rubric
 }
 
 // RubricPanel renders the current rubric state for the assessment page.
 func (h *Handler) RubricPanel(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "assessmentID")
+	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	view := rubricView{AssessmentID: id}
-	rubric, err := h.Assessments.GetRubric(r.Context(), id)
+	rubric, err := h.assessments.GetRubric(r.Context(), id)
 	if err == nil {
 		view.Rubric = rubric
-	} else if !errors.Is(err, domain.ErrNotFound) {
+	} else if !errors.Is(err, helper.ErrNotFound) {
 		h.fail(w, r, err)
 		return
 	}
 	h.renderPartial(w, r, http.StatusOK, "rubric_panel", view)
 }
 
-func parseInt64(s string) (int64, bool) {
-	v, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		return 0, false
+func parseUUID(s string) (uuid.UUID, bool) {
+	v, err := uuid.Parse(strings.TrimSpace(s))
+	if err != nil || v == uuid.Nil {
+		return uuid.Nil, false
 	}
 	return v, true
 }

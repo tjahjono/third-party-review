@@ -6,7 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+	"third-party-review/internal/service"
+
+	"github.com/google/uuid"
 )
 
 func TestParseStandardTemplate(t *testing.T) {
@@ -22,7 +27,7 @@ func TestParseStandardTemplate(t *testing.T) {
 		t.Errorf("HeaderRow = %d, want 3 (the title block sits above it)", pv.HeaderRow)
 	}
 	// All 7 template columns should auto-map from the canonical header row.
-	for _, tf := range domain.TemplateFields {
+	for _, tf := range dto.TemplateFields {
 		b, ok := pv.Mapping.Bindings[tf.Field]
 		if !ok {
 			t.Errorf("field %s was not auto-mapped", tf.Field)
@@ -32,7 +37,7 @@ func TestParseStandardTemplate(t *testing.T) {
 			t.Errorf("field %s mapped with confidence %.2f, want >= %.2f", tf.Field, b.Confidence, autoMapThreshold)
 		}
 	}
-	if err := pv.Mapping.Validate(); err != nil {
+	if err := service.ValidateColumnMapping(pv.Mapping); err != nil {
 		t.Errorf("auto mapping is invalid: %v", err)
 	}
 
@@ -65,7 +70,8 @@ func TestApplyProducesQuestionsWithDomains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	questions, _, err := p.Apply(pv.Grid, pv.Mapping, domains, nil, 42)
+	assessmentID := uuid.New()
+	questions, _, err := p.Apply(pv.Grid, pv.Mapping, domains, nil, assessmentID)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -74,17 +80,17 @@ func TestApplyProducesQuestionsWithDomains(t *testing.T) {
 	}
 
 	for i, q := range questions {
-		if q.AssessmentID != 42 {
-			t.Errorf("question %d AssessmentID = %d, want 42", i, q.AssessmentID)
+		if q.AssessmentID != assessmentID {
+			t.Errorf("question %d AssessmentID = %s, want %s", i, q.AssessmentID, assessmentID)
 		}
 		// Every question must end up associated with exactly one domain.
-		if q.DomainID == 0 {
+		if q.DomainID == uuid.Nil {
 			t.Errorf("question %d (%q) has no domain", i, q.QuestionText)
 		}
 		if q.Position != i {
 			t.Errorf("question %d Position = %d, want %d", i, q.Position, i)
 		}
-		if q.ReviewStatus != domain.ReviewPending {
+		if q.ReviewStatus != model.ReviewPending {
 			t.Errorf("question %d ReviewStatus = %s, want pending", i, q.ReviewStatus)
 		}
 	}
@@ -96,7 +102,7 @@ func TestApplyProducesQuestionsWithDomains(t *testing.T) {
 	if !strings.Contains(first.ThirdPartyAnswer, "isolated VLANs") {
 		t.Errorf("first answer = %q", first.ThirdPartyAnswer)
 	}
-	if !first.HasEvidence() {
+	if !helper.HasEvidence(first) {
 		t.Error("first question should report evidence present")
 	}
 	if first.AssessorRemark == "" {
@@ -104,7 +110,7 @@ func TestApplyProducesQuestionsWithDomains(t *testing.T) {
 	}
 	// The unanswered cloud-posture question must survive ingestion so the AI
 	// can flag it as missing rather than it vanishing silently.
-	var blank *domain.Question
+	var blank *model.Question
 	for _, q := range questions {
 		if strings.Contains(q.QuestionText, "posture") {
 			blank = q
@@ -113,7 +119,7 @@ func TestApplyProducesQuestionsWithDomains(t *testing.T) {
 	if blank == nil {
 		t.Fatal("the unanswered question was dropped during ingestion")
 	}
-	if !blank.AnswerIsBlank() {
+	if !helper.AnswerIsBlank(blank) {
 		t.Error("unanswered question should report a blank answer")
 	}
 }
@@ -129,19 +135,19 @@ func TestApplyDomainOverrideWins(t *testing.T) {
 
 	// The user corrects a misdetected boundary: move row 6 (the firewall
 	// question, detected as Network Security) into Data Security.
-	var dataSecurityID int64
+	var dataSecurityID uuid.UUID
 	for _, d := range domains {
 		if d.Name == "Data Security" {
 			dataSecurityID = d.ID
 		}
 	}
-	questions, _, err := p.Apply(pv.Grid, pv.Mapping, domains, map[int]int64{6: dataSecurityID}, 1)
+	questions, _, err := p.Apply(pv.Grid, pv.Mapping, domains, map[int]uuid.UUID{6: dataSecurityID}, uuid.New())
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	for _, q := range questions {
 		if q.SourceRow == 6 && q.DomainID != dataSecurityID {
-			t.Errorf("override ignored: row 6 domain = %d, want %d", q.DomainID, dataSecurityID)
+			t.Errorf("override ignored: row 6 domain = %s, want %s", q.DomainID, dataSecurityID)
 		}
 	}
 }
@@ -160,13 +166,13 @@ func TestParseCSVWithoutFeedbackColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if _, ok := pv.Mapping.Bindings[domain.FieldThirdPartyFeedback]; ok {
+	if _, ok := pv.Mapping.Bindings[model.FieldThirdPartyFeedback]; ok {
 		t.Error("Third Party Feedback should be unmapped when the column is absent")
 	}
-	if _, ok := pv.Mapping.Bindings[domain.FieldQuestion]; !ok {
+	if _, ok := pv.Mapping.Bindings[model.FieldQuestion]; !ok {
 		t.Fatal("Question column was not mapped despite uppercase header")
 	}
-	if _, ok := pv.Mapping.Bindings[domain.FieldThirdPartyAnswer]; !ok {
+	if _, ok := pv.Mapping.Bindings[model.FieldThirdPartyAnswer]; !ok {
 		t.Fatal(`"3rd Party Answer" was not mapped to third_party_answer`)
 	}
 	if pv.QuestionCount != 2 {
@@ -176,7 +182,7 @@ func TestParseCSVWithoutFeedbackColumns(t *testing.T) {
 		t.Fatalf("got %d sections, want 2", len(pv.Sections))
 	}
 
-	questions, _, err := p.Apply(pv.Grid, pv.Mapping, seededDomains(), nil, 1)
+	questions, _, err := p.Apply(pv.Grid, pv.Mapping, seededDomains(), nil, uuid.New())
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -207,9 +213,9 @@ func TestPreviewIsStillUsableWithoutAQuestionColumn(t *testing.T) {
 	}
 
 	// Committing is still refused until the column is chosen.
-	if _, _, err := New().Apply(pv.Grid, pv.Mapping, seededDomains(), nil, 1); err == nil {
+	if _, _, err := New().Apply(pv.Grid, pv.Mapping, seededDomains(), nil, uuid.New()); err == nil {
 		t.Error("Apply should refuse a mapping with no Question column")
-	} else if !errors.Is(err, domain.ErrInvalidInput) {
+	} else if !errors.Is(err, helper.ErrInvalidInput) {
 		t.Errorf("Apply error should map to invalid input, got %v", err)
 	}
 }
@@ -225,7 +231,7 @@ func TestFallbackQuestionColumnOnUnnamedHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse should fall back rather than fail: %v", err)
 	}
-	b, ok := pv.Mapping.Bindings[domain.FieldQuestion]
+	b, ok := pv.Mapping.Bindings[model.FieldQuestion]
 	if !ok {
 		t.Fatal("fallback did not map a question column")
 	}
@@ -297,7 +303,7 @@ func TestQuestionsBeforeFirstDividerAreAttributedAndFlagged(t *testing.T) {
 	}
 
 	// Critically, no question may be silently dropped.
-	questions, _, err := New().Apply(pv.Grid, pv.Mapping, seededDomains(), nil, 1)
+	questions, _, err := New().Apply(pv.Grid, pv.Mapping, seededDomains(), nil, uuid.New())
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -305,7 +311,7 @@ func TestQuestionsBeforeFirstDividerAreAttributedAndFlagged(t *testing.T) {
 		t.Fatalf("got %d questions, want 2", len(questions))
 	}
 	for _, q := range questions {
-		if q.DomainID == 0 {
+		if q.DomainID == uuid.Nil {
 			t.Errorf("question %q left without a domain", q.QuestionText)
 		}
 	}
@@ -341,7 +347,7 @@ func TestDividerVariantsAndPunctuation(t *testing.T) {
 	}{
 		{"1. Network Security", "Network Security"},
 		{"2) Application Security", "Application Security"},
-		{"Section 3 - Logical Access Security", "Logical Access Security"},
+		{"dto.Section 3 - Logical Access Security", "Logical Access Security"},
 		{"DATA SECURITY", "Data Security"},
 		{"5. Security Logging & Monitoring", "Security Logging and Monitoring"},
 		{"6. Change, Performance and Capacity Management", "Change, Performance and Capacity Management"},
@@ -400,7 +406,7 @@ func TestSemicolonDelimitedCSV(t *testing.T) {
 	if pv.QuestionCount != 1 {
 		t.Fatalf("QuestionCount = %d, want 1", pv.QuestionCount)
 	}
-	questions, _, err := New().Apply(pv.Grid, pv.Mapping, seededDomains(), nil, 1)
+	questions, _, err := New().Apply(pv.Grid, pv.Mapping, seededDomains(), nil, uuid.New())
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -420,22 +426,22 @@ func TestEmptyAndGarbageFiles(t *testing.T) {
 	}
 	// Every failure must be user-facing, never a bare internal error.
 	_, err := p.Parse(strings.NewReader(""), "empty.csv", seededDomains())
-	var pe *ParseError
+	var pe *helper.ParseError
 	if !errors.As(err, &pe) {
-		t.Fatalf("expected *ParseError, got %T", err)
+		t.Fatalf("expected *helper.ParseError, got %T", err)
 	}
 }
 
 func TestMappingValidateRejectsDuplicateColumns(t *testing.T) {
-	m := &domain.ColumnMapping{Bindings: map[domain.QuestionField]domain.ColumnBinding{
-		domain.FieldQuestion:         {Field: domain.FieldQuestion, Index: 0},
-		domain.FieldThirdPartyAnswer: {Field: domain.FieldThirdPartyAnswer, Index: 0},
+	m := &model.ColumnMapping{Bindings: map[model.QuestionField]model.ColumnBinding{
+		model.FieldQuestion:         {Field: model.FieldQuestion, Index: 0},
+		model.FieldThirdPartyAnswer: {Field: model.FieldThirdPartyAnswer, Index: 0},
 	}}
-	err := m.Validate()
+	err := service.ValidateColumnMapping(m)
 	if err == nil {
 		t.Fatal("two fields sharing one column should be rejected")
 	}
-	if !errors.Is(err, domain.ErrInvalidInput) {
+	if !errors.Is(err, helper.ErrInvalidInput) {
 		t.Errorf("error should map to invalid input, got %v", err)
 	}
 }
@@ -447,4 +453,94 @@ func TestColumnLabel(t *testing.T) {
 			t.Errorf("columnLabel(%d) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// TestSyncCandidatesFollowsACorrection is the regression for a bug that made
+// the mapping screen appear inert: the dropdowns render from Candidates while
+// the parser uses Mapping, and the re-preview replaced only Mapping. Every
+// correction was drawn back at its original guess, so changing a column looked
+// like it did nothing at all.
+func TestSyncCandidatesFollowsACorrection(t *testing.T) {
+	data := buildWorkbook(t, "Assessment", standardRows(), 4, 8, 11)
+	pv, err := New().Parse(bytes.NewReader(data), "tpsa.xlsx", seededDomains())
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	// Precondition: column B auto-mapped to Assessor Remark.
+	remark, ok := pv.Mapping.Bindings[model.FieldAssessorRemark]
+	if !ok {
+		t.Fatal("precondition: Assessor Remark was not auto-mapped")
+	}
+	if suggestedFor(pv, remark.Index) != model.FieldAssessorRemark {
+		t.Fatalf("precondition: column %d does not show Assessor Remark", remark.Index)
+	}
+
+	// The user unmaps that column, as the re-preview handler would.
+	corrected := &model.ColumnMapping{
+		SheetName: pv.Mapping.SheetName,
+		HeaderRow: pv.Mapping.HeaderRow,
+		Bindings:  map[model.QuestionField]model.ColumnBinding{},
+	}
+	for field, b := range pv.Mapping.Bindings {
+		if field == model.FieldAssessorRemark {
+			continue
+		}
+		corrected.Bindings[field] = b
+	}
+	pv.Mapping = corrected
+	pv.SyncCandidates(corrected)
+
+	if got := suggestedFor(pv, remark.Index); got != "" {
+		t.Errorf("column %d still shows %q after being unmapped; the correction was discarded",
+			remark.Index, got)
+	}
+	// Every other column must keep its selection.
+	for field, b := range corrected.Bindings {
+		if got := suggestedFor(pv, b.Index); got != field {
+			t.Errorf("column %d shows %q, want %q", b.Index, got, field)
+		}
+	}
+}
+
+// TestSyncCandidatesReflectsAReassignment covers moving a field from one
+// column to another, which must update both dropdowns.
+func TestSyncCandidatesReflectsAReassignment(t *testing.T) {
+	csv := "Col A,Col B,Col C\n" +
+		"Do you encrypt data at rest?,REF-1,Yes AES-256\n" +
+		"Are keys rotated on a schedule?,REF-2,Annually\n"
+	pv, err := New().Parse(strings.NewReader(csv), "odd.csv", seededDomains())
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	moved := &model.ColumnMapping{
+		HeaderRow: pv.Mapping.HeaderRow,
+		Bindings: map[model.QuestionField]model.ColumnBinding{
+			model.FieldQuestion:         {Field: model.FieldQuestion, Index: 0, Manual: true},
+			model.FieldThirdPartyAnswer: {Field: model.FieldThirdPartyAnswer, Index: 2, Manual: true},
+		},
+	}
+	pv.Mapping = moved
+	pv.SyncCandidates(moved)
+
+	if got := suggestedFor(pv, 0); got != model.FieldQuestion {
+		t.Errorf("column A shows %q, want question_text", got)
+	}
+	if got := suggestedFor(pv, 1); got != "" {
+		t.Errorf("column B shows %q, want unmapped", got)
+	}
+	if got := suggestedFor(pv, 2); got != model.FieldThirdPartyAnswer {
+		t.Errorf("column C shows %q, want third_party_answer", got)
+	}
+}
+
+// suggestedFor reports what the mapping screen would show selected for a column.
+func suggestedFor(pv *dto.IngestPreview, index int) model.QuestionField {
+	for _, c := range pv.Candidates {
+		if c.Index == index {
+			return c.Suggested
+		}
+	}
+	return ""
 }

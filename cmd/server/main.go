@@ -19,10 +19,12 @@ import (
 	"third-party-review/internal/config"
 	delivery "third-party-review/internal/delivery/http"
 	"third-party-review/internal/delivery/http/handler"
-	"third-party-review/internal/repository/postgres"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/repository"
 	"third-party-review/internal/service/aiclient"
 	"third-party-review/internal/service/assessment"
 	"third-party-review/internal/service/auth"
+	"third-party-review/internal/service/parser"
 	"third-party-review/internal/service/review"
 	"third-party-review/migrations"
 	"third-party-review/web"
@@ -52,6 +54,13 @@ func main() {
 }
 
 func run() error {
+	// Read a .env before anything looks at the environment, so `go run` works
+	// with nothing exported by hand. Exported variables still win, so this is
+	// inert in a container where the orchestrator supplies the environment.
+	if err := config.LoadDotEnv(); err != nil {
+		return fmt.Errorf("read .env: %w", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -63,7 +72,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	db, err := postgres.Connect(ctx, cfg.DB)
+	db, err := helper.Connect(ctx, cfg.DB)
 	if err != nil {
 		return err
 	}
@@ -71,23 +80,38 @@ func run() error {
 	log.Info("connected to postgres")
 
 	if cfg.App.RunMigrations {
-		if err := postgres.Migrate(db.Pool(), migrations.FS, ".", log); err != nil {
+		if err := helper.Migrate(db.Pool(), migrations.FS, ".", log); err != nil {
 			return err
 		}
 	} else {
 		log.Warn("RUN_MIGRATIONS is false; the schema is assumed to be current")
 	}
 
-	repos := db.Repositories()
+	repos := repository.NewRepositories(db)
 
 	reviewer, err := aiclient.New(cfg.AI, log)
 	if err != nil {
 		return err
 	}
 
-	assessmentSvc := assessment.New(repos, log)
-	reviewSvc := review.New(repos, reviewer, cfg.AI, log)
-	authSvc := auth.New(repos.Users, repos.Sessions, cfg.App.SessionTTL, log)
+	// Each service is constructed from an explicit Deps naming only the
+	// contracts it uses, and each constructor fails here - at startup, saying
+	// which dependency is missing - rather than panicking on a request later.
+	assessmentSvc, err := assessment.New(
+		assessment.FromRepositories(repos, parser.New(), log))
+	if err != nil {
+		return err
+	}
+	reviewSvc, err := review.New(
+		review.FromRepositories(repos, reviewer, cfg.AI, log))
+	if err != nil {
+		return err
+	}
+	authSvc, err := auth.New(
+		auth.FromRepositories(repos, cfg.App.SessionTTL, log))
+	if err != nil {
+		return err
+	}
 
 	// Create the first account from configuration when the database is empty.
 	// A no-op once any user exists, so a restart can never reset an account.
@@ -113,15 +137,20 @@ func run() error {
 	// Expired sessions are swept periodically so the table stays bounded.
 	go sweepSessions(ctx, authSvc, log)
 
+	handlers, err := handler.New(handler.Deps{
+		Assessments: assessmentSvc,
+		Reviews:     reviewSvc,
+		Auth:        authSvc,
+		Templates:   renderer,
+		SessionTTL:  cfg.App.SessionTTL,
+		Log:         log,
+	})
+	if err != nil {
+		return err
+	}
+
 	router := delivery.NewRouter(delivery.Deps{
-		Handler: handler.New(handler.Deps{
-			Assessments: assessmentSvc,
-			Reviews:     reviewSvc,
-			Auth:        authSvc,
-			Templates:   renderer,
-			SessionTTL:  cfg.App.SessionTTL,
-			Log:         log,
-		}),
+		Handler:       handlers,
 		Auth:          authSvc,
 		SessionSecret: cfg.App.SessionSecret,
 		Static:        staticFS,

@@ -4,11 +4,12 @@ import (
 	"net/http"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 )
 
 type vendorListView struct {
-	Vendors []*domain.Vendor
+	Vendors []*model.Vendor
 	Total   int
 	Search  string
 }
@@ -16,7 +17,7 @@ type vendorListView struct {
 // ListVendors renders the vendor index.
 func (h *Handler) ListVendors(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
-	vendors, total, err := h.Assessments.ListVendors(r.Context(), search, 200, 0)
+	vendors, total, err := h.assessments.ListVendors(r.Context(), search, 200, 0)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -38,21 +39,21 @@ func (h *Handler) ListVendors(w http.ResponseWriter, r *http.Request) {
 // CreateVendor registers a new third party and swaps the refreshed table back.
 func (h *Handler) CreateVendor(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.fail(w, r, domain.ValidationError{Field: "form", Message: "The form could not be read."})
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
 		return
 	}
-	v := &domain.Vendor{
+	v := &model.Vendor{
 		Name:         r.FormValue("name"),
 		ContactName:  r.FormValue("contact_name"),
 		ContactEmail: r.FormValue("contact_email"),
 		Notes:        r.FormValue("notes"),
 	}
-	if err := h.Assessments.CreateVendor(r.Context(), v); err != nil {
+	if err := h.assessments.CreateVendor(r.Context(), v); err != nil {
 		h.fail(w, r, err)
 		return
 	}
 
-	vendors, total, err := h.Assessments.ListVendors(r.Context(), "", 200, 0)
+	vendors, total, err := h.assessments.ListVendors(r.Context(), "", 200, 0)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -62,16 +63,16 @@ func (h *Handler) CreateVendor(w http.ResponseWriter, r *http.Request) {
 
 // DeleteVendor removes a vendor and its assessments.
 func (h *Handler) DeleteVendor(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "vendorID")
+	id, err := pathID(r, "vendorID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if err := h.Assessments.DeleteVendor(r.Context(), id); err != nil {
+	if err := h.assessments.DeleteVendor(r.Context(), id); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	vendors, total, err := h.Assessments.ListVendors(r.Context(), "", 200, 0)
+	vendors, total, err := h.assessments.ListVendors(r.Context(), "", 200, 0)
 	if err != nil {
 		h.fail(w, r, err)
 		return

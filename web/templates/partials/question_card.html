@@ -6,12 +6,12 @@
     <div class="d-flex flex-wrap gap-2 mb-2">
       <span class="badge text-bg-secondary">{{ $q.DomainName }}</span>
       {{ with $q.LatestResult }}
-        <span class="{{ bandClass .Band }}">{{ .Band.Label }} &middot; {{ .RiskScore }}/5</span>
-        <span class="badge text-bg-light border">{{ .Completeness.Label }}</span>
+        <span class="{{ bandClass (resultBand .) }}">{{ bandLabel (resultBand .) }} &middot; {{ .RiskScore }}/5</span>
+        <span class="badge text-bg-light border">{{ completenessLabel .Completeness }}</span>
       {{ else }}
         <span class="badge text-bg-light border">Not yet reviewed</span>
       {{ end }}
-      <span class="{{ reviewBadge $q.ReviewStatus }}">{{ $q.ReviewStatus.Label }}</span>
+      <span class="{{ reviewBadge $q.ReviewStatus }}">{{ reviewStatusLabel $q.ReviewStatus }}</span>
       {{ if .Saved }}<span class="badge text-bg-success">Saved</span>{{ end }}
     </div>
     <h3 class="h6 mb-0">{{ $q.QuestionText }}</h3>
@@ -55,7 +55,7 @@
       <div class="list-group list-group-flush border rounded">
         {{ range .Flags }}
         <div class="list-group-item d-flex gap-2 align-items-baseline py-2">
-          <span class="badge band-high flex-shrink-0">{{ .Kind.Label }}</span>
+          <span class="badge band-high flex-shrink-0">{{ flagLabel .Kind }}</span>
           <span class="small">{{ .Detail }}</span>
         </div>
         {{ end }}
@@ -106,9 +106,13 @@
       {{ if $q.AssessorFeedbackDraft }}
       <div class="draft-block">
         <span class="field-label">
-          AI draft feedback
-          {{ if ne $q.ReviewStatus "finalized" }}
-            <span class="text-secondary fw-normal">&mdash; unconfirmed until a human signs it off</span>
+          {{ if and $q.LatestResult (eq $q.LatestResult.Provider "mock") }}
+            <span class="badge text-bg-warning">MOCK</span> Stub feedback &mdash; not model-generated
+          {{ else }}
+            AI draft feedback
+            {{ if ne $q.ReviewStatus "finalized" }}
+              <span class="text-secondary fw-normal">&mdash; unconfirmed until a human signs it off</span>
+            {{ end }}
           {{ end }}
         </span>
         <div class="field-value">{{ $q.AssessorFeedbackDraft }}</div>

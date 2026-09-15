@@ -6,14 +6,15 @@ import (
 	"testing"
 	"time"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 	"third-party-review/internal/service/auth"
 	"third-party-review/pkg/totp"
 )
 
 const testPassword = "correct-horse-battery-staple"
 
-func mustUser(t *testing.T, env *testEnv, username string) *domain.User {
+func mustUser(t *testing.T, env *testEnv, username string) *model.User {
 	t.Helper()
 	u, err := env.Auth.CreateUser(context.Background(), username, "", testPassword)
 	if err != nil {
@@ -71,7 +72,7 @@ func TestLoginAndSessionLifecycle(t *testing.T) {
 	if err := env.Auth.Logout(ctx, res.Session.ID); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
-	if _, _, err := env.Auth.Authenticate(ctx, res.Session.ID); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := env.Auth.Authenticate(ctx, res.Session.ID); !errors.Is(err, helper.ErrNotFound) {
 		t.Errorf("a logged-out session should not authenticate, got %v", err)
 	}
 }
@@ -111,7 +112,7 @@ func TestExpiredSessionIsRejectedAndPurged(t *testing.T) {
 		t.Fatalf("age the session: %v", err)
 	}
 
-	if _, _, err := env.Auth.Authenticate(ctx, res.Session.ID); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := env.Auth.Authenticate(ctx, res.Session.ID); !errors.Is(err, helper.ErrNotFound) {
 		t.Errorf("an expired session should not authenticate, got %v", err)
 	}
 
@@ -151,7 +152,7 @@ func TestMFAEnrolmentAndLogin(t *testing.T) {
 		t.Fatal("the secret was stored before the user confirmed a code")
 	}
 
-	if _, err := env.Auth.CompleteMFAEnrolment(ctx, user.ID, enrolment.Secret, "000000"); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, err := env.Auth.CompleteMFAEnrolment(ctx, user.ID, enrolment.Secret, "000000"); !errors.Is(err, helper.ErrInvalidInput) {
 		t.Errorf("a wrong confirmation code should be refused, got %v", err)
 	}
 
@@ -168,7 +169,7 @@ func TestMFAEnrolmentAndLogin(t *testing.T) {
 	}
 
 	// Recovery codes are stored hashed, never in plaintext.
-	hashes, err := env.Repos.Users.RecoveryCodes(ctx, user.ID)
+	hashes, err := env.Repos.RecoveryCodes.ListHashes(ctx, user.ID)
 	if err != nil {
 		t.Fatalf("RecoveryCodes: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestMFAEnrolmentAndLogin(t *testing.T) {
 		t.Fatal("MFA should be required after enrolment")
 	}
 	// The half-finished session authorises nothing.
-	if _, _, err := env.Auth.Authenticate(ctx, res.Session.ID); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := env.Auth.Authenticate(ctx, res.Session.ID); !errors.Is(err, helper.ErrNotFound) {
 		t.Error("a session pending MFA must not authenticate")
 	}
 
@@ -214,13 +215,13 @@ func TestMFAEnrolmentAndLogin(t *testing.T) {
 	if _, err := env.Auth.VerifyMFA(ctx, third.Session.ID, recovery[0]); !errors.Is(err, auth.ErrInvalidMFACode) {
 		t.Error("a recovery code was accepted twice")
 	}
-	remaining, _ := env.Repos.Users.RecoveryCodes(ctx, user.ID)
+	remaining, _ := env.Repos.RecoveryCodes.ListHashes(ctx, user.ID)
 	if len(remaining) != 7 {
 		t.Errorf("%d recovery codes remain, want 7", len(remaining))
 	}
 
 	// --- disabling requires the password ------------------------------------
-	if err := env.Auth.DisableMFA(ctx, user.ID, "wrong-password-here"); !errors.Is(err, domain.ErrInvalidInput) {
+	if err := env.Auth.DisableMFA(ctx, user.ID, "wrong-password-here"); !errors.Is(err, helper.ErrInvalidInput) {
 		t.Error("disabling MFA without the correct password should be refused")
 	}
 	if err := env.Auth.DisableMFA(ctx, user.ID, testPassword); err != nil {
@@ -230,7 +231,7 @@ func TestMFAEnrolmentAndLogin(t *testing.T) {
 	if after.MFAEnabled || after.MFASecret != "" {
 		t.Error("disabling MFA left the secret behind")
 	}
-	leftovers, _ := env.Repos.Users.RecoveryCodes(ctx, user.ID)
+	leftovers, _ := env.Repos.RecoveryCodes.ListHashes(ctx, user.ID)
 	if len(leftovers) != 0 {
 		t.Errorf("%d recovery codes survived disabling MFA", len(leftovers))
 	}
@@ -272,10 +273,10 @@ func TestChangePassword(t *testing.T) {
 	ctx := context.Background()
 	user := mustUser(t, env, "assessor")
 
-	if err := env.Auth.ChangePassword(ctx, user.ID, "wrong", "a-brand-new-passphrase"); !errors.Is(err, domain.ErrInvalidInput) {
+	if err := env.Auth.ChangePassword(ctx, user.ID, "wrong", "a-brand-new-passphrase"); !errors.Is(err, helper.ErrInvalidInput) {
 		t.Error("changing a password without the current one should be refused")
 	}
-	if err := env.Auth.ChangePassword(ctx, user.ID, testPassword, "short"); !errors.Is(err, domain.ErrInvalidInput) {
+	if err := env.Auth.ChangePassword(ctx, user.ID, testPassword, "short"); !errors.Is(err, helper.ErrInvalidInput) {
 		t.Error("a new password below the length floor should be refused")
 	}
 	if err := env.Auth.ChangePassword(ctx, user.ID, testPassword, "a-brand-new-passphrase"); err != nil {
@@ -310,7 +311,7 @@ func TestBootstrapCreatesOnlyTheFirstUser(t *testing.T) {
 	if n != 1 {
 		t.Errorf("bootstrap ran again and created %d users", n)
 	}
-	if _, err := env.Repos.Users.GetByUsername(ctx, "second"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := env.Repos.Users.GetByUsername(ctx, "second"); !errors.Is(err, helper.ErrNotFound) {
 		t.Error("bootstrap created an account even though users already existed")
 	}
 }

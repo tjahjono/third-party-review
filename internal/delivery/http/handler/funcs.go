@@ -6,8 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"third-party-review/internal/domain"
-	"third-party-review/internal/service/parser"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
+
+	"github.com/google/uuid"
 )
 
 // templateFuncs are the helpers available to every template. They exist so
@@ -15,10 +18,10 @@ import (
 // one place rather than being repeated across templates.
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"templateFields": func() []domain.TemplateField { return domain.TemplateFields },
+		"templateFields": func() []dto.TemplateField { return dto.TemplateFields },
 
-		"fieldLabel": func(f domain.QuestionField) string {
-			if tf, ok := domain.TemplateFieldByName(f); ok {
+		"fieldLabel": func(f model.QuestionField) string {
+			if tf, ok := dto.TemplateFieldByName(f); ok {
 				return tf.Label
 			}
 			return string(f)
@@ -28,48 +31,71 @@ func templateFuncs() template.FuncMap {
 		// own palette rather than Bootstrap's semantic colours: the brand
 		// colour is red, so a "Critical" badge in Bootstrap's danger red would
 		// be indistinguishable from a primary button.
-		"bandClass": func(b domain.RiskBand) string { return "badge band-" + string(b) },
+		// The model types carry no methods any more, so anything a template
+		// used to call as .Status.Label is registered here and delegates to
+		// the one implementation in helper. Registering them rather than
+		// re-deriving the strings in HTML is what keeps the screen and the CSV
+		// export saying the same words.
+		"statusLabel":       helper.AssessmentStatusLabel,
+		"reviewStatusLabel": helper.ReviewStatusLabel,
+		"bandLabel":         helper.RiskBandLabel,
+		"completenessLabel": helper.CompletenessLabel,
+		"flagLabel":         helper.FlagKindLabel,
+		"jobStatusLabel":    helper.JobStatusLabel,
+
+		"resultBand":  helper.ResultBand,
+		"domainBand":  helper.DomainBand,
+		"summaryBand": helper.SummaryBand,
+		"jobPercent":  helper.JobPercent,
+
+		// sameID compares an optional id against a concrete one. A preview row
+		// carries *uuid.UUID because it may not have been attributed to a
+		// domain yet, and `eq` refuses to compare a pointer with a value.
+		"sameID":         func(a *uuid.UUID, b uuid.UUID) bool { return a != nil && *a == b },
+		"canStartReview": helper.CanStartReview,
+
+		"bandClass": func(b model.RiskBand) string { return "badge band-" + string(b) },
 
 		// bandColor is the same palette without the badge sizing, for the
 		// large score headline which sets its own type scale.
-		"bandColor": func(b domain.RiskBand) string { return "band-" + string(b) },
+		"bandColor": func(b model.RiskBand) string { return "band-" + string(b) },
 
 		// statusBadge maps an assessment status to a Bootstrap badge class.
-		"statusBadge": func(s domain.AssessmentStatus) string {
+		"statusBadge": func(s model.AssessmentStatus) string {
 			switch s {
-			case domain.StatusUploaded:
+			case model.StatusUploaded:
 				return "badge text-bg-light border"
-			case domain.StatusMapped:
+			case model.StatusMapped:
 				return "badge text-bg-info"
-			case domain.StatusReviewing:
+			case model.StatusReviewing:
 				return "badge text-bg-warning"
-			case domain.StatusReviewed:
+			case model.StatusReviewed:
 				return "badge text-bg-success"
-			case domain.StatusClosed:
+			case model.StatusClosed:
 				return "badge text-bg-secondary"
 			}
 			return "badge text-bg-light border"
 		},
 
 		// reviewBadge maps a question's sign-off state to a badge class.
-		"reviewBadge": func(s domain.ReviewStatus) string {
+		"reviewBadge": func(s model.ReviewStatus) string {
 			switch s {
-			case domain.ReviewPending:
+			case model.ReviewPending:
 				return "badge text-bg-light border"
-			case domain.ReviewAIDrafted:
+			case model.ReviewAIDrafted:
 				return "badge text-bg-warning"
-			case domain.ReviewFinalized:
+			case model.ReviewFinalized:
 				return "badge text-bg-success"
 			}
 			return "badge text-bg-light border"
 		},
 
 		// progressClass colours the AI review progress bar by job state.
-		"progressClass": func(s domain.JobStatus) string {
+		"progressClass": func(s model.JobStatus) string {
 			switch s {
-			case domain.JobSucceeded:
+			case model.JobSucceeded:
 				return "bg-success"
-			case domain.JobFailed, domain.JobCancelled:
+			case model.JobFailed, model.JobCancelled:
 				return "bg-danger"
 			}
 			return ""
@@ -145,8 +171,8 @@ func templateFuncs() template.FuncMap {
 		"add": func(a, b int) int { return a + b },
 		"sub": func(a, b int) int { return a - b },
 
-		"isQuestionRow": func(k parser.RowKind) bool { return k == parser.RowQuestion },
-		"isDividerRow":  func(k parser.RowKind) bool { return k == parser.RowDivider },
+		"isQuestionRow": func(k dto.RowKind) bool { return k == dto.RowQuestion },
+		"isDividerRow":  func(k dto.RowKind) bool { return k == dto.RowDivider },
 
 		"hasEvidence": func(s string) bool { return strings.TrimSpace(s) != "" },
 

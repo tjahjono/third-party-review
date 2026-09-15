@@ -5,8 +5,12 @@ import (
 	"regexp"
 	"strings"
 
-	"third-party-review/internal/domain"
+	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
+	"third-party-review/internal/model"
 	"third-party-review/pkg/fuzzy"
+
+	"github.com/google/uuid"
 )
 
 // dividerThreshold is how closely a cell must match a seeded domain name to be
@@ -16,7 +20,7 @@ import (
 const dividerThreshold = 0.78
 
 // sectionNumberPrefix strips the leading numbering real templates use, e.g.
-// "1. Network Security", "2) Application Security", "Section 3 - Data Security".
+// "1. Network Security", "2) Application Security", "dto.Section 3 - Data Security".
 var sectionNumberPrefix = regexp.MustCompile(`^\s*(?:section\s*)?\d+\s*[.)\-:]?\s*`)
 
 // DetectSections classifies every row below the header as a divider, a
@@ -30,16 +34,16 @@ var sectionNumberPrefix = regexp.MustCompile(`^\s*(?:section\s*)?\d+\s*[.)\-:]?\
 // row carries content that differs from it. A question row always fails the
 // second half, so a question whose text merely mentions "Cloud Security" never
 // opens a section.
-func DetectSections(g *Grid, mapping *domain.ColumnMapping, domains []*domain.AssessmentDomain) ([]Row, []Section, []string) {
+func DetectSections(g *dto.Grid, mapping *model.ColumnMapping, domains []*model.AssessmentDomain) ([]dto.SourceRow, []dto.Section, []string) {
 	var (
-		rows     []Row
-		sections []Section
+		rows     []dto.SourceRow
+		sections []dto.Section
 		warnings []string
 	)
-	qCol, hasQ := mapping.Index(domain.FieldQuestion)
+	qCol, hasQ := helper.MappedColumn(mapping, model.FieldQuestion)
 
 	var (
-		current    *Section
+		current    *dto.Section
 		unassigned []int
 	)
 
@@ -51,25 +55,25 @@ func DetectSections(g *Grid, mapping *domain.ColumnMapping, domains []*domain.As
 	}
 
 	for i := mapping.HeaderRow + 1; i < len(g.Rows); i++ {
-		row := Row{Index: i, Cells: g.Rows[i]}
+		row := dto.SourceRow{Index: i, Cells: g.Rows[i]}
 
 		if isBlankRow(g.Rows[i]) {
-			row.Kind = RowBlank
+			row.Kind = dto.RowBlank
 			rows = append(rows, row)
 			continue
 		}
 
 		if d, text, score, col := matchDivider(g.Rows[i], domains); d != nil && !hasDistinctContent(g.Rows[i], col) {
 			flush()
-			current = &Section{
+			current = &dto.Section{
 				DomainID:   d.ID,
 				DomainName: d.Name,
 				DividerRow: i,
 				FirstRow:   i + 1,
 				LastRow:    i + 1,
 			}
-			row.Kind = RowDivider
-			row.DomainID = d.ID
+			row.Kind = dto.RowDivider
+			row.DomainID = &d.ID
 			row.DomainName = d.Name
 			row.DividerText = text
 			row.DividerScore = score
@@ -89,15 +93,15 @@ func DetectSections(g *Grid, mapping *domain.ColumnMapping, domains []*domain.As
 		if questionCell == "" {
 			// Content but no question text: a stray note, or the tail of a
 			// merged answer. Skipping is safer than inventing a question.
-			row.Kind = RowBlank
+			row.Kind = dto.RowBlank
 			rows = append(rows, row)
 			continue
 		}
 
-		row.Kind = RowQuestion
+		row.Kind = dto.RowQuestion
 		row.Values = extractValues(g, i, mapping)
 		if current != nil {
-			row.DomainID = current.DomainID
+			row.DomainID = &current.DomainID
 			row.DomainName = current.DomainName
 			current.LastRow = i
 			current.RowCount++
@@ -113,19 +117,20 @@ func DetectSections(g *Grid, mapping *domain.ColumnMapping, domains []*domain.As
 	// when no divider was found at all) and mark the section inferred so the
 	// preview highlights it for checking.
 	if len(unassigned) > 0 {
-		fallbackID, fallbackName := int64(0), ""
+		fallbackID, fallbackName := uuid.Nil, ""
 		if len(sections) > 0 {
 			fallbackID, fallbackName = sections[0].DomainID, sections[0].DomainName
 		} else if len(domains) > 0 {
 			fallbackID, fallbackName = domains[0].ID, domains[0].Name
 		}
-		if fallbackID != 0 {
+		if fallbackID != uuid.Nil {
 			first, last := rows[unassigned[0]].Index, rows[unassigned[len(unassigned)-1]].Index
 			for _, ri := range unassigned {
-				rows[ri].DomainID = fallbackID
+				id := fallbackID
+				rows[ri].DomainID = &id
 				rows[ri].DomainName = fallbackName
 			}
-			sections = append([]Section{{
+			sections = append([]dto.Section{{
 				DomainID:   fallbackID,
 				DomainName: fallbackName,
 				DividerRow: -1,
@@ -179,9 +184,9 @@ func hasDistinctContent(cells []string, skip int) bool {
 // name itself. Without that guard a sentence such as "Describe how Cloud
 // Security responsibilities are split with your provider" scores high enough
 // on containment alone to be mistaken for a heading.
-func matchDivider(cells []string, domains []*domain.AssessmentDomain) (*domain.AssessmentDomain, string, float64, int) {
+func matchDivider(cells []string, domains []*model.AssessmentDomain) (*model.AssessmentDomain, string, float64, int) {
 	var (
-		best      *domain.AssessmentDomain
+		best      *model.AssessmentDomain
 		bestText  string
 		bestScore float64
 		bestCol   = -1
@@ -195,7 +200,7 @@ func matchDivider(cells []string, domains []*domain.AssessmentDomain) (*domain.A
 		if len([]rune(raw)) > 80 {
 			continue
 		}
-		norm := domain.NormalizeHeader(sectionNumberPrefix.ReplaceAllString(strings.ToLower(raw), ""))
+		norm := helper.NormalizeHeader(sectionNumberPrefix.ReplaceAllString(strings.ToLower(raw), ""))
 		if norm == "" {
 			continue
 		}
@@ -225,8 +230,8 @@ func matchDivider(cells []string, domains []*domain.AssessmentDomain) (*domain.A
 // one domain: its name, its slug spelled out, and a comma-free variant. The
 // last one matters for "Change, Performance and Capacity Management", which
 // files abbreviate and repunctuate freely.
-func domainAliases(d *domain.AssessmentDomain) []string {
-	name := domain.NormalizeHeader(d.Name)
+func domainAliases(d *model.AssessmentDomain) []string {
+	name := helper.NormalizeHeader(d.Name)
 	aliases := []string{name}
 	if slug := strings.ReplaceAll(d.Slug, "-", " "); slug != name {
 		aliases = append(aliases, slug)
@@ -240,8 +245,8 @@ func domainAliases(d *domain.AssessmentDomain) []string {
 }
 
 // extractValues pulls the mapped field values out of one source row.
-func extractValues(g *Grid, rowIdx int, mapping *domain.ColumnMapping) map[domain.QuestionField]string {
-	values := make(map[domain.QuestionField]string, len(mapping.Bindings))
+func extractValues(g *dto.Grid, rowIdx int, mapping *model.ColumnMapping) map[model.QuestionField]string {
+	values := make(map[model.QuestionField]string, len(mapping.Bindings))
 	for field, b := range mapping.Bindings {
 		values[field] = strings.TrimSpace(g.Cell(rowIdx, b.Index))
 	}
