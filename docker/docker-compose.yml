@@ -44,7 +44,7 @@ services:
       BOOTSTRAP_USERNAME: ${BOOTSTRAP_USERNAME:-}
       BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
 
-      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_PROVIDER: ${AI_PROVIDER}
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_CHAT_PATH: ${AI_CHAT_PATH:-/chat/completions}
       AI_API_KEY: ${AI_API_KEY:-}

@@ -85,7 +85,10 @@ Needs Go 1.25.4 (the version pinned in `go.mod`) and a reachable Postgres 13+
 createdb tpsa
 export DATABASE_URL="postgres://you@localhost:5432/tpsa?sslmode=disable"
 export SESSION_SECRET="$(openssl rand -hex 32)"
-export AI_PROVIDER=mock
+export AI_PROVIDER=openaicompat
+export AI_BASE_URL=https://openwebui.internal.example/api
+export AI_API_KEY=sk-...
+export AI_MODEL=qwen2.5:32b-instruct
 make run        # or: go run ./cmd/server
 ```
 
@@ -96,20 +99,10 @@ non-interactively instead — for a scripted deployment — set
 `BOOTSTRAP_USERNAME` and `BOOTSTRAP_PASSWORD` in `.env`. Both are ignored once
 any account exists, so a restart can never resurrect or reset an account.
 
-### Trying it without an AI provider
-
-`AI_PROVIDER=mock` (the default in `.env.example`) runs the entire pipeline
-with a deterministic offline reviewer — no API key, no cost, no network. Upload
-a questionnaire, map it, run a review, sign off and export, all before you
-point it at a real model. Switch to your own provider when you are ready; see
-the next section.
-
----
-
 ## Configuring the AI provider
 
 The reviewer is reached through one interface (`aiclient.AIReviewer`) with
-three implementations. `AI_PROVIDER` selects one; nothing above the client
+two implementations. `AI_PROVIDER` selects one; nothing above the client
 layer knows which is active.
 
 ### Open WebUI serving Qwen (the default deployment)
@@ -137,14 +130,6 @@ AI_BASE_URL=https://api.anthropic.com/v1
 AI_API_KEY=sk-ant-...
 AI_MODEL=claude-sonnet-4-20250514
 ```
-
-### Mock
-
-`AI_PROVIDER=mock` is a deterministic offline reviewer. It applies a few of the
-heuristics a real assessor would (blank answer → score 5 and a missing-answer
-flag; "industry standard firewalls are in place" → vague flag) so the entire
-pipeline can be exercised with no API key and no cost. It does not read for
-meaning and is not a substitute for a model.
 
 ### Notes on self-hosted backends
 
@@ -333,7 +318,7 @@ touching the layers around it:
 |---|---|
 | `internal/repository` | one interface per model — `VendorRepository`, `AssessmentRepository`, `UploadRepository`, `QuestionRepository`, `ReviewResultRepository`, `AssessmentSummaryRepository`, `RubricRepository`, `AssessmentRubricRepository`, `ReviewJobRepository`, `UserRepository`, `RecoveryCodeRepository`, `SessionRepository` — plus `TxManager` |
 | `internal/service` | `VendorService`, `IngestService`, `AssessmentService`, `SignOffService`, `RubricService`, `ReviewService`, `AuthService`, `QuestionnaireParser` |
-| `internal/service/aiclient` | `AIReviewer` — declared alongside its own implementations (`anthropic`, `openAICompat`, `mock`), the same way each repository file declares its interface next to its struct |
+| `internal/service/aiclient` | `AIReviewer` — declared alongside its own implementations (`anthropic`, `openAICompat`), the same way each repository file declares its interface next to its struct |
 | `delivery/http/handler/routes.go` | `Routes` — the delivery contract the router depends on instead of the concrete handler set |
 
 The compile-time assertions proving each implementation satisfies its contract
@@ -414,7 +399,7 @@ internal/
   service/
     parser            Excel/CSV reading, column mapping, domain detection
     assessment        vendors, assessments, ingestion
-    aiclient          AIReviewer interface + openaicompat / anthropic / mock
+    aiclient          AIReviewer interface + openaicompat / anthropic
     review            batching, scoring, aggregation, background worker
     auth              passwords, sessions, optional TOTP MFA
   delivery/http       chi router, handlers, middleware
@@ -483,8 +468,7 @@ make test-race
 The integration suite skips itself when `TEST_DATABASE_URL` is unset, so
 `go test ./...` passes on a machine with no database. It runs the real
 migrations and walks the whole pipeline — upload, preview, mapping, review,
-aggregation — using the production mock reviewer, so it exercises exactly the
-code path a developer gets with `AI_PROVIDER=mock`.
+aggregation.
 
 Beyond the happy path, the suite pins the behaviours that are expensive to get
 wrong:

@@ -157,12 +157,23 @@ func (s *Service) Finish(ctx context.Context, job *model.ReviewJob, runErr error
 
 // Run executes one review job to completion. It is called by the worker, and
 // directly by tests. Progress is written to the job row as it goes so the UI
-// poll has something real to show.
+// poll has something real to show. Each chunk's results are persisted as soon
+// as that chunk is reviewed, rather than held in memory for one write at the
+// end - a large questionnaire takes minutes, and a reviewer (or a run that
+// fails partway through) should see completed questions immediately instead
+// of losing everything reviewed so far.
 func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 	started := time.Now()
 	assessmentID := job.AssessmentID
 
 	if err := s.assessments.SetStatus(ctx, assessmentID, model.StatusReviewing, time.Now().UTC()); err != nil {
+		return err
+	}
+	// Set eagerly, not after the run completes: results start landing under
+	// this run's id from the first persisted chunk on, and current_run_id is
+	// purely informational (LatestByAssessment is not scoped by it), so there
+	// is nothing to lose by pointing to it early.
+	if err := s.assessments.SetCurrentRun(ctx, assessmentID, job.ID); err != nil {
 		return err
 	}
 
@@ -189,10 +200,10 @@ func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 	groups := groupByDomain(questions)
 
 	var (
-		results    []*model.ReviewResult
 		notes      []string
 		done       int
 		failed     int
+		persisted  int
 		groupIndex int
 	)
 
@@ -211,10 +222,16 @@ func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 			}
 
 			batchResults, batchNotes, batchFailed := s.reviewChunk(ctx, assessment, chunk, rubricExcerpt, peers, job.ID)
-			results = append(results, batchResults...)
 			notes = append(notes, batchNotes...)
 			done += len(batchResults)
 			failed += batchFailed
+
+			if len(batchResults) > 0 {
+				if err := s.persistChunk(ctx, batchResults); err != nil {
+					return fmt.Errorf("persist reviewed chunk: %w", err)
+				}
+				persisted += len(batchResults)
+			}
 
 			if err := s.jobs.UpdateProgress(ctx, job.ID, done, failed, stage); err != nil {
 				s.log.Warn("progress update failed", "job_id", job.ID, "error", err)
@@ -222,28 +239,8 @@ func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 		}
 	}
 
-	if len(results) == 0 {
+	if persisted == 0 {
 		return fmt.Errorf("the AI provider returned no usable results for any of the %d questions", len(questions))
-	}
-
-	// Persist results and drafts together so a reviewer never sees a score
-	// without the feedback that explains it.
-	err = s.tx.RunInTx(ctx, func(ctx context.Context) error {
-		if err := s.results.BulkCreate(ctx, results); err != nil {
-			return err
-		}
-		for _, r := range results {
-			if strings.TrimSpace(r.FeedbackDraft) == "" {
-				continue
-			}
-			if err := s.questions.ApplyDraft(ctx, r.QuestionID, r.FeedbackDraft); err != nil {
-				return err
-			}
-		}
-		return s.assessments.SetCurrentRun(ctx, assessmentID, job.ID)
-	})
-	if err != nil {
-		return err
 	}
 
 	if err := s.buildSummary(ctx, assessment, job.ID, notes); err != nil {
@@ -261,8 +258,28 @@ func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 
 	s.log.Info("review complete",
 		"assessment_id", assessmentID, "job_id", job.ID,
-		"reviewed", len(results), "failed", failed, "duration", time.Since(started).Round(time.Second))
+		"reviewed", persisted, "failed", failed, "duration", time.Since(started).Round(time.Second))
 	return nil
+}
+
+// persistChunk writes one batch's results and drafts together, so a reviewer
+// never sees a score without the feedback that explains it, and commits
+// immediately rather than waiting for the rest of the assessment.
+func (s *Service) persistChunk(ctx context.Context, results []*model.ReviewResult) error {
+	return s.tx.RunInTx(ctx, func(ctx context.Context) error {
+		if err := s.results.BulkCreate(ctx, results); err != nil {
+			return err
+		}
+		for _, r := range results {
+			if strings.TrimSpace(r.FeedbackDraft) == "" {
+				continue
+			}
+			if err := s.questions.ApplyDraft(ctx, r.QuestionID, r.FeedbackDraft); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 const maxRubricExcerpt = 6000

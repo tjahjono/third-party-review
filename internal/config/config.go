@@ -47,7 +47,7 @@ type DB struct {
 // AI holds provider-agnostic AI reviewer settings. Provider selects which
 // concrete implementation of service.AIReviewer is constructed at wiring time.
 type AI struct {
-	// Provider is one of: openaicompat, anthropic, mock.
+	// Provider is one of: openaicompat, anthropic.
 	Provider string
 	// BaseURL is the provider root, e.g. https://openwebui.internal/api
 	// for an Open WebUI deployment, or https://api.openai.com/v1.
@@ -69,7 +69,6 @@ type AI struct {
 const (
 	ProviderOpenAICompat = "openaicompat"
 	ProviderAnthropic    = "anthropic"
-	ProviderMock         = "mock"
 )
 
 // Load reads configuration from the environment, applying defaults, and
@@ -97,7 +96,7 @@ func Load() (*Config, error) {
 			ConnectTimeout:  envDuration("DB_CONNECT_TIMEOUT", 10*time.Second),
 		},
 		AI: AI{
-			Provider:       strings.ToLower(env("AI_PROVIDER", ProviderMock)),
+			Provider:       strings.ToLower(env("AI_PROVIDER", "")),
 			BaseURL:        strings.TrimRight(env("AI_BASE_URL", ""), "/"),
 			ChatPath:       env("AI_CHAT_PATH", "/chat/completions"),
 			APIKey:         env("AI_API_KEY", ""),
@@ -128,8 +127,6 @@ func (c *Config) validate() error {
 		c.App.SessionSecret = "dev-insecure-session-secret-change-me"
 	}
 	switch c.AI.Provider {
-	case ProviderMock:
-		// No external configuration needed.
 	case ProviderOpenAICompat, ProviderAnthropic:
 		if c.AI.BaseURL == "" {
 			return fmt.Errorf("config: AI_BASE_URL is required for AI_PROVIDER=%s", c.AI.Provider)
@@ -137,8 +134,10 @@ func (c *Config) validate() error {
 		if c.AI.Model == "" {
 			return fmt.Errorf("config: AI_MODEL is required for AI_PROVIDER=%s", c.AI.Provider)
 		}
+	case "":
+		return fmt.Errorf("config: AI_PROVIDER is required (openaicompat or anthropic)")
 	default:
-		return fmt.Errorf("config: unknown AI_PROVIDER %q (want openaicompat, anthropic or mock)", c.AI.Provider)
+		return fmt.Errorf("config: unknown AI_PROVIDER %q (want openaicompat or anthropic)", c.AI.Provider)
 	}
 	if c.AI.BatchSize < 1 {
 		return fmt.Errorf("config: AI_BATCH_SIZE must be >= 1")
