@@ -151,13 +151,32 @@ func (h *Handler) buildResultsView(r *http.Request, id uuid.UUID) (*resultsView,
 }
 
 // StartReview queues a background AI review and swaps in the progress panel.
+// The form may narrow the run with scope=unreviewed (only questions with no
+// AI pass yet) or scope=selected plus one or more question_ids (a
+// reviewer-chosen subset); an absent or empty scope reviews everything, as
+// before.
 func (h *Handler) StartReview(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r, "assessmentID")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	job, err := h.reviews.Enqueue(r.Context(), id)
+	if err := r.ParseForm(); err != nil {
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
+		return
+	}
+	scope := model.ReviewScope(strings.TrimSpace(r.FormValue("scope")))
+
+	var questionIDs []uuid.UUID
+	if scope == model.ScopeSelected {
+		for _, raw := range r.Form["question_ids"] {
+			if v, ok := parseUUID(raw); ok {
+				questionIDs = append(questionIDs, v)
+			}
+		}
+	}
+
+	job, err := h.reviews.Enqueue(r.Context(), id, scope, questionIDs)
 	if err != nil {
 		h.fail(w, r, err)
 		return

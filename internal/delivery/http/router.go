@@ -71,9 +71,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.RequireAuth("/login"))
 
-		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/assessments", http.StatusFound)
-		})
+		r.Get("/", h.DashboardPage)
 
 		r.Route("/account", func(r chi.Router) {
 			r.Get("/", h.AccountPage)

@@ -6,6 +6,7 @@ import (
 	"third-party-review/internal/service"
 	"third-party-review/internal/service/assessment"
 	"third-party-review/internal/service/auth"
+	"third-party-review/internal/service/dashboard"
 	"third-party-review/internal/service/review"
 )
 
@@ -15,6 +16,9 @@ import (
 // independently - and a routing test can assert every path is reachable
 // against a stub that records calls.
 type Routes interface {
+	// Dashboard
+	DashboardPage(w http.ResponseWriter, r *http.Request)
+
 	// Authentication and account
 	LoginPage(w http.ResponseWriter, r *http.Request)
 	Login(w http.ResponseWriter, r *http.Request)
@@ -82,5 +86,6 @@ var (
 	_ service.SignOffService   = (*assessment.Service)(nil)
 	_ service.RubricService    = (*assessment.Service)(nil)
 	_ service.ReviewService    = (*review.Service)(nil)
+	_ service.DashboardService = (*dashboard.Service)(nil)
 	_ service.AuthService      = (*auth.Service)(nil)
 )

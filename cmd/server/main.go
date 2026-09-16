@@ -24,6 +24,7 @@ import (
 	"third-party-review/internal/service/aiclient"
 	"third-party-review/internal/service/assessment"
 	"third-party-review/internal/service/auth"
+	"third-party-review/internal/service/dashboard"
 	"third-party-review/internal/service/parser"
 	"third-party-review/internal/service/review"
 	"third-party-review/migrations"
@@ -112,6 +113,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	dashboardSvc, err := dashboard.New(
+		dashboard.FromRepositories(repos, log))
+	if err != nil {
+		return err
+	}
 
 	// Create the first account from configuration when the database is empty.
 	// A no-op once any user exists, so a restart can never reset an account.
@@ -140,6 +146,7 @@ func run() error {
 	handlers, err := handler.New(handler.Deps{
 		Assessments: assessmentSvc,
 		Reviews:     reviewSvc,
+		Dashboards:  dashboardSvc,
 		Auth:        authSvc,
 		Templates:   renderer,
 		SessionTTL:  cfg.App.SessionTTL,

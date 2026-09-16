@@ -73,11 +73,16 @@ type AssessmentFacade interface {
 // half of the contract and are paired: every caller of Run must call Finish,
 // because a panic inside Run has to be caught before the outcome is recorded.
 type ReviewService interface {
-	Enqueue(ctx context.Context, assessmentID uuid.UUID) (*model.ReviewJob, error)
+	Enqueue(ctx context.Context, assessmentID uuid.UUID, scope model.ReviewScope, questionIDs []uuid.UUID) (*model.ReviewJob, error)
 	Status(ctx context.Context, assessmentID uuid.UUID) (*model.ReviewJob, error)
 	Run(ctx context.Context, job *model.ReviewJob) error
 	Finish(ctx context.Context, job *model.ReviewJob, runErr error) error
 	RecomputeSummary(ctx context.Context, assessmentID uuid.UUID) (*model.AssessmentSummary, error)
+}
+
+// DashboardService aggregates cross-assessment figures for the home page.
+type DashboardService interface {
+	Build(ctx context.Context) (*dto.Dashboard, error)
 }
 
 // AuthService covers login, sessions and the optional second factor.

@@ -20,6 +20,14 @@ func templateFuncs() template.FuncMap {
 	return template.FuncMap{
 		"templateFields": func() []dto.TemplateField { return dto.TemplateFields },
 
+		// assessmentStatuses and riskBands give the dashboard a fixed display
+		// order; ranging directly over a map would print keys alphabetically
+		// instead of in lifecycle/severity order.
+		"assessmentStatuses": func() []model.AssessmentStatus { return model.AllAssessmentStatuses },
+		"riskBands": func() []model.RiskBand {
+			return []model.RiskBand{model.BandCritical, model.BandHigh, model.BandMedium, model.BandLow}
+		},
+
 		"fieldLabel": func(f model.QuestionField) string {
 			if tf, ok := dto.TemplateFieldByName(f); ok {
 				return tf.Label

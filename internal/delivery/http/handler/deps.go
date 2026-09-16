@@ -12,6 +12,7 @@ import (
 type Deps struct {
 	Assessments service.AssessmentFacade
 	Reviews     service.ReviewService
+	Dashboards  service.DashboardService
 	Auth        service.AuthService
 
 	// Templates is a concrete renderer rather than an interface: it is a pure
@@ -38,6 +39,8 @@ func (d Deps) validate() error {
 		missing = "Assessments"
 	case d.Reviews == nil:
 		missing = "Reviews"
+	case d.Dashboards == nil:
+		missing = "Dashboards"
 	case d.Auth == nil:
 		missing = "Auth"
 	case d.Templates == nil:

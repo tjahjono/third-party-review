@@ -26,6 +26,7 @@ import (
 type Handler struct {
 	assessments service.AssessmentFacade
 	reviews     service.ReviewService
+	dashboards  service.DashboardService
 	auth        service.AuthService
 	templates   *Renderer
 	sessionTTL  time.Duration
@@ -43,6 +44,7 @@ func New(d Deps) (*Handler, error) {
 	return &Handler{
 		assessments: d.Assessments,
 		reviews:     d.Reviews,
+		dashboards:  d.Dashboards,
 		auth:        d.Auth,
 		templates:   d.Templates,
 		sessionTTL:  ttl,

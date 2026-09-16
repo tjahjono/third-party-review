@@ -15,6 +15,8 @@ type ReviewJob struct {
 	ID           uuid.UUID `json:"id"`
 	AssessmentID uuid.UUID `json:"assessment_id"`
 	Status       JobStatus `json:"status"`
+	// Scope narrows which questions this run covers; see ReviewScope.
+	Scope ReviewScope `json:"scope"`
 
 	TotalQuestions  int `json:"total_questions"`
 	DoneQuestions   int `json:"done_questions"`

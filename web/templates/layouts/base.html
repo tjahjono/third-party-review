@@ -18,7 +18,7 @@
 {{ if .User }}
 <nav class="navbar navbar-expand-lg navbar-dark" style="background-color: var(--brand-red);">
   <div class="container-xl">
-    <a class="navbar-brand d-flex align-items-center fw-semibold" href="/assessments">
+    <a class="navbar-brand d-flex align-items-center fw-semibold" href="/">
       <span class="navbar-brand-mark">TP</span>TPSA Reviewer
     </a>
 
@@ -30,6 +30,10 @@
 
     <div class="collapse navbar-collapse" id="mainnav">
       <ul class="navbar-nav me-auto">
+        <li class="nav-item">
+          <a class="nav-link {{ if eq .Active "dashboard" }}active fw-semibold{{ end }}"
+             href="/">Dashboard</a>
+        </li>
         <li class="nav-item">
           <a class="nav-link {{ if eq .Active "assessments" }}active fw-semibold{{ end }}"
              href="/assessments">Assessments</a>

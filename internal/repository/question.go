@@ -19,6 +19,9 @@ type QuestionRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Question, error)
 	List(ctx context.Context, f dto.QuestionFilter) ([]*model.Question, error)
 	ListForReview(ctx context.Context, assessmentID uuid.UUID) ([]*model.Question, error)
+	// ListByIDs fetches a specific subset of an assessment's questions, scoped
+	// to that assessment so a stray id from elsewhere cannot be reviewed.
+	ListByIDs(ctx context.Context, assessmentID uuid.UUID, ids []uuid.UUID) ([]*model.Question, error)
 	CountByAssessment(ctx context.Context, assessmentID uuid.UUID) (int, error)
 	SetDomain(ctx context.Context, questionID, domainID uuid.UUID) error
 	ApplyDraft(ctx context.Context, questionID uuid.UUID, draft string) error
@@ -191,6 +194,47 @@ func (r *questionRepository) List(ctx context.Context, f dto.QuestionFilter) ([]
 
 func (r *questionRepository) ListForReview(ctx context.Context, assessmentID uuid.UUID) ([]*model.Question, error) {
 	return r.List(ctx, dto.QuestionFilter{AssessmentID: assessmentID})
+}
+
+// ListByIDs fetches the given questions, filtered to those belonging to
+// assessmentID. Placeholders are built explicitly (rather than relying on a
+// driver-level array parameter) to match how BulkCreate builds its own
+// multi-row statement above.
+func (r *questionRepository) ListByIDs(ctx context.Context, assessmentID uuid.UUID, ids []uuid.UUID) ([]*model.Question, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, assessmentID)
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		args = append(args, id)
+		placeholders[i] = fmt.Sprintf("$%d", len(args))
+	}
+
+	stmt := fmt.Sprintf(`
+		SELECT %s, d.name, d.scrutiny_note
+		  FROM questions q
+		  JOIN assessment_domains d ON d.id = q.domain_id
+		 WHERE q.assessment_id = $1 AND q.id IN (%s)
+		 ORDER BY d.sort_order, q.position, q.id`,
+		questionColumns, strings.Join(placeholders, ","))
+
+	rows, err := r.db.Querier(ctx).Query(ctx, stmt, args...)
+	if err != nil {
+		return nil, helper.MapErr(err)
+	}
+	defer rows.Close()
+
+	var out []*model.Question
+	for rows.Next() {
+		q, err := scanQuestion(rows, true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, helper.MapErr(rows.Err())
 }
 
 func (r *questionRepository) CountByAssessment(ctx context.Context, assessmentID uuid.UUID) (int, error) {

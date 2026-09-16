@@ -79,6 +79,18 @@ const (
 	FlagVague          FlagKind = "vague"
 )
 
+// ReviewScope narrows which questions one review job covers. "all" reviews
+// the whole assessment (the original, and still default, behaviour);
+// "unreviewed" covers only questions with no AI pass yet; "selected" covers a
+// user-chosen subset recorded in review_job_questions.
+type ReviewScope string
+
+const (
+	ScopeAll        ReviewScope = "all"
+	ScopeUnreviewed ReviewScope = "unreviewed"
+	ScopeSelected   ReviewScope = "selected"
+)
+
 // JobStatus is the lifecycle of a background AI review run.
 type JobStatus string
 

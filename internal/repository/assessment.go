@@ -121,7 +121,7 @@ func (r *assessmentRepository) List(ctx context.Context, filter dto.AssessmentFi
 	query := fmt.Sprintf(`
 		SELECT %s, v.name,
 		       s.overall_score, s.question_count, s.flagged_count,
-		       s.incomplete_count, s.finalized_count
+		       s.incomplete_count, s.finalized_count, s.pending_finalization
 		  FROM assessments a
 		  JOIN vendors v ON v.id = a.vendor_id
 		  LEFT JOIN assessment_summaries s ON s.assessment_id = a.id
@@ -270,6 +270,7 @@ func scanAssessment(row interface{ Scan(...any) error }, withVendor bool, withSu
 		flaggedCnt    *int
 		incompleteCnt *int
 		finalizedCnt  *int
+		pendingCnt    *int
 	)
 
 	targets := []any{
@@ -285,7 +286,7 @@ func scanAssessment(row interface{ Scan(...any) error }, withVendor bool, withSu
 
 	if withSummary {
 		targets = append(targets,
-			&overallScore, &questionCnt, &flaggedCnt, &incompleteCnt, &finalizedCnt)
+			&overallScore, &questionCnt, &flaggedCnt, &incompleteCnt, &finalizedCnt, &pendingCnt)
 	}
 
 	if err := row.Scan(targets...); err != nil {
@@ -297,12 +298,13 @@ func scanAssessment(row interface{ Scan(...any) error }, withVendor bool, withSu
 	// misleading zero.
 	if withSummary && overallScore != nil {
 		assessment.Summary = &model.AssessmentSummary{
-			AssessmentID:    assessment.ID,
-			OverallScore:    *overallScore,
-			QuestionCount:   derefInt(questionCnt),
-			FlaggedCount:    derefInt(flaggedCnt),
-			IncompleteCount: derefInt(incompleteCnt),
-			FinalizedCount:  derefInt(finalizedCnt),
+			AssessmentID:        assessment.ID,
+			OverallScore:        *overallScore,
+			QuestionCount:       derefInt(questionCnt),
+			FlaggedCount:        derefInt(flaggedCnt),
+			IncompleteCount:     derefInt(incompleteCnt),
+			FinalizedCount:      derefInt(finalizedCnt),
+			PendingFinalization: derefInt(pendingCnt),
 		}
 	}
 

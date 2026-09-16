@@ -19,6 +19,11 @@
     {{ if $d.Summary }}
       <a class="btn btn-outline-secondary btn-sm" href="/assessments/{{ $a.ID }}/export.csv">Export CSV</a>
     {{ end }}
+    <button class="btn btn-outline-danger btn-sm"
+            hx-delete="/assessments/{{ $a.ID }}"
+            hx-confirm="Delete this assessment? This removes every question, AI result and review history for it. This cannot be undone.">
+      Delete assessment
+    </button>
   </div>
 </div>
 
@@ -60,12 +65,32 @@
         </p>
       </div>
       {{ if and (canStartReview $a.Status) (not $d.Closed) }}
-      <button class="btn btn-primary"
-              hx-post="/assessments/{{ $a.ID }}/review"
-              hx-target="#review-status"
-              hx-swap="outerHTML">
-        {{ if $a.Summary }}Re-run review{{ else }}Start AI review{{ end }}
-      </button>
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <button class="btn btn-primary"
+                hx-post="/assessments/{{ $a.ID }}/review"
+                hx-vals='{"scope":"all"}'
+                hx-target="#review-status"
+                hx-swap="outerHTML">
+          {{ if $a.Summary }}Re-run full review{{ else }}Start AI review{{ end }}
+        </button>
+        {{ if $d.Questions }}
+        <button class="btn btn-outline-primary"
+                hx-post="/assessments/{{ $a.ID }}/review"
+                hx-vals='{"scope":"unreviewed"}'
+                hx-target="#review-status"
+                hx-swap="outerHTML">
+          Review unreviewed only
+        </button>
+        <button class="btn btn-outline-primary"
+                hx-post="/assessments/{{ $a.ID }}/review"
+                hx-vals='{"scope":"selected"}'
+                hx-include="#question-list input[name='question_ids']:checked"
+                hx-target="#review-status"
+                hx-swap="outerHTML">
+          Review selected
+        </button>
+        {{ end }}
+      </div>
       {{ end }}
     </div>
     {{ template "review_status" (dict "AssessmentID" $a.ID "Job" $d.Job "Polling" $d.Polling "Finished" false) }}

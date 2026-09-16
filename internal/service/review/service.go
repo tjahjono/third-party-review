@@ -70,7 +70,15 @@ func MustNew(deps Deps) *Service {
 // Enqueue validates that a review may start and creates a queued job. The
 // actual work happens in the background worker, so the HTTP request returns
 // immediately and the UI polls for progress.
-func (s *Service) Enqueue(ctx context.Context, assessmentID uuid.UUID) (*model.ReviewJob, error) {
+//
+// scope narrows which questions the run covers: ScopeAll (or "") reviews
+// everything, ScopeUnreviewed covers only questions with no AI pass yet, and
+// ScopeSelected covers exactly questionIDs (validated against the
+// assessment). The chosen set for a selected-scope job is persisted to
+// review_job_questions here, not carried in memory - the worker always
+// re-reads the job fresh from the database (see Run), so anything the run
+// needs to know has to be in the row or a table keyed off it.
+func (s *Service) Enqueue(ctx context.Context, assessmentID uuid.UUID, scope model.ReviewScope, questionIDs []uuid.UUID) (*model.ReviewJob, error) {
 	a, err := s.assessments.GetByID(ctx, assessmentID)
 	if err != nil {
 		return nil, err
@@ -92,20 +100,72 @@ func (s *Service) Enqueue(ctx context.Context, assessmentID uuid.UUID) (*model.R
 			Message: "A review is already queued or running for this assessment.",
 		}
 	}
-	count, err := s.questions.CountByAssessment(ctx, assessmentID)
-	if err != nil {
-		return nil, err
+	if scope == "" {
+		scope = model.ScopeAll
 	}
-	if count == 0 {
+
+	var (
+		count       int
+		selectedIDs []uuid.UUID
+	)
+	switch scope {
+	case model.ScopeAll:
+		count, err = s.questions.CountByAssessment(ctx, assessmentID)
+		if err != nil {
+			return nil, err
+		}
+		if count == 0 {
+			return nil, helper.ValidationError{
+				Field:   "questions",
+				Message: "This assessment has no questions to review.",
+			}
+		}
+	case model.ScopeUnreviewed:
+		pending := model.ReviewPending
+		qs, err := s.questions.List(ctx, dto.QuestionFilter{AssessmentID: assessmentID, ReviewStatus: &pending})
+		if err != nil {
+			return nil, err
+		}
+		if len(qs) == 0 {
+			return nil, helper.ValidationError{
+				Field:   "questions",
+				Message: "Every question has already had at least one AI review.",
+			}
+		}
+		count = len(qs)
+	case model.ScopeSelected:
+		if len(questionIDs) == 0 {
+			return nil, helper.ValidationError{
+				Field:   "question_ids",
+				Message: "Select at least one question to review.",
+			}
+		}
+		qs, err := s.questions.ListByIDs(ctx, assessmentID, questionIDs)
+		if err != nil {
+			return nil, err
+		}
+		if len(qs) == 0 {
+			return nil, helper.ValidationError{
+				Field:   "question_ids",
+				Message: "None of the selected questions belong to this assessment.",
+			}
+		}
+		selectedIDs = make([]uuid.UUID, len(qs))
+		for i, q := range qs {
+			selectedIDs[i] = q.ID
+		}
+		count = len(selectedIDs)
+	default:
 		return nil, helper.ValidationError{
-			Field:   "questions",
-			Message: "This assessment has no questions to review.",
+			Field:   "scope",
+			Message: fmt.Sprintf("Unknown review scope %q.", scope),
 		}
 	}
 
 	job := &model.ReviewJob{
 		AssessmentID:   assessmentID,
 		Status:         model.JobQueued,
+		Scope:          scope,
 		TotalQuestions: count,
 		Stage:          "Queued",
 		Provider:       s.reviewer.Name(),
@@ -120,7 +180,12 @@ func (s *Service) Enqueue(ctx context.Context, assessmentID uuid.UUID) (*model.R
 	if err := s.jobs.Create(ctx, job); err != nil {
 		return nil, err
 	}
-	s.log.Info("review queued", "assessment_id", assessmentID, "job_id", job.ID, "questions", count)
+	if scope == model.ScopeSelected {
+		if err := s.jobs.SaveQuestionScope(ctx, job.ID, selectedIDs); err != nil {
+			return nil, err
+		}
+	}
+	s.log.Info("review queued", "assessment_id", assessmentID, "job_id", job.ID, "scope", scope, "questions", count)
 	return job, nil
 }
 
@@ -181,12 +246,39 @@ func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 	if err != nil {
 		return err
 	}
-	questions, err := s.questions.ListForReview(ctx, assessmentID)
+
+	// allQuestions backs cross-answer peer context regardless of scope, so a
+	// selected-scope run can still notice a contradiction with an answer
+	// outside the selection. questions is what actually gets reviewed; for
+	// ScopeAll they are the same slice.
+	allQuestions, err := s.questions.ListForReview(ctx, assessmentID)
 	if err != nil {
 		return err
 	}
+	if len(allQuestions) == 0 {
+		return fmt.Errorf("assessment %s has no questions", assessmentID)
+	}
+
+	questions := allQuestions
+	switch job.Scope {
+	case model.ScopeSelected:
+		ids, err := s.jobs.QuestionIDsForJob(ctx, job.ID)
+		if err != nil {
+			return fmt.Errorf("load selected question scope: %w", err)
+		}
+		questions, err = s.questions.ListByIDs(ctx, assessmentID, ids)
+		if err != nil {
+			return err
+		}
+	case model.ScopeUnreviewed:
+		pending := model.ReviewPending
+		questions, err = s.questions.List(ctx, dto.QuestionFilter{AssessmentID: assessmentID, ReviewStatus: &pending})
+		if err != nil {
+			return err
+		}
+	}
 	if len(questions) == 0 {
-		return fmt.Errorf("assessment %d has no questions", assessmentID)
+		return fmt.Errorf("no questions matched the requested review scope")
 	}
 
 	rubricExcerpt := ""
@@ -196,7 +288,7 @@ func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 		return err
 	}
 
-	peers := buildPeers(questions, peerSampleSize)
+	peers := buildPeers(allQuestions, peerSampleSize)
 	groups := groupByDomain(questions)
 
 	var (
@@ -354,13 +446,21 @@ func (s *Service) reviewChunk(
 	return out, notes, failed
 }
 
-// buildSummary aggregates the run and asks the provider for a narrative.
+// buildSummary aggregates the run and asks the provider for a narrative. The
+// summary always covers the whole assessment, not just this run's scope: it
+// is scored from each question's latest result regardless of which run
+// produced it (results.LatestByAssessment with a nil runID), the same as
+// RecomputeSummary. Scoping this to runID would be correct for a full review,
+// where every question was just reviewed - but a selective run only touches
+// some questions, and scoping here would silently drop every other question
+// from the aggregate. runID is still recorded on the summary, to say which
+// run last touched it.
 func (s *Service) buildSummary(ctx context.Context, assessment *model.Assessment, runID uuid.UUID, notes []string) error {
 	questions, err := s.questions.ListForReview(ctx, assessment.ID)
 	if err != nil {
 		return err
 	}
-	results, err := s.results.LatestByAssessment(ctx, assessment.ID, &runID)
+	results, err := s.results.LatestByAssessment(ctx, assessment.ID, nil)
 	if err != nil {
 		return err
 	}

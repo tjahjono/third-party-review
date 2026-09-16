@@ -3,7 +3,13 @@
 <article class="card question-card mb-3 {{ if .Saved }}just-saved{{ end }}" id="question-{{ $q.ID }}">
 
   <header class="card-header">
-    <div class="d-flex flex-wrap gap-2 mb-2">
+    <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
+      {{ if not .Closed }}
+      <div class="form-check mb-0 me-1">
+        <input class="form-check-input" type="checkbox" name="question_ids" value="{{ $q.ID }}"
+               id="select-{{ $q.ID }}" aria-label="Select this question for a targeted re-review">
+      </div>
+      {{ end }}
       <span class="badge text-bg-secondary">{{ $q.DomainName }}</span>
       {{ with $q.LatestResult }}
         <span class="{{ bandClass (resultBand .) }}">{{ bandLabel (resultBand .) }} &middot; {{ .RiskScore }}/5</span>

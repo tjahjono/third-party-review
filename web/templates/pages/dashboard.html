@@ -1,0 +1,120 @@
+{{ define "content" }}
+{{ $d := .Data }}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Dashboard</h1>
+    <p class="text-secondary mb-0">Where every vendor assessment stands, at a glance.</p>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-secondary small text-uppercase mb-1">Vendors</div>
+        <div class="h3 mb-0">{{ $d.VendorCount }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-secondary small text-uppercase mb-1">Assessments</div>
+        <div class="h3 mb-0">{{ $d.AssessmentCount }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-secondary small text-uppercase mb-1">Reviewed at least once</div>
+        <div class="h3 mb-0">{{ $d.ReviewedCount }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-secondary small text-uppercase mb-1">Awaiting sign-off</div>
+        <div class="h3 mb-0">{{ $d.PendingFinalization }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 card-title mb-3">Assessments by status</h2>
+        <div class="d-flex flex-wrap gap-2">
+          {{ range assessmentStatuses }}
+          <span class="{{ statusBadge . }}">{{ statusLabel . }} &middot; {{ index $d.StatusCounts . }}</span>
+          {{ end }}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 card-title mb-3">Risk across reviewed assessments</h2>
+        {{ if eq $d.ReviewedCount 0 }}
+        <p class="text-secondary small mb-0">No assessment has been reviewed yet.</p>
+        {{ else }}
+        <div class="d-flex flex-wrap gap-2">
+          {{ range riskBands }}
+          <span class="{{ bandClass . }}">{{ bandLabel . }} &middot; {{ index $d.RiskBandCounts . }}</span>
+          {{ end }}
+        </div>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+</div>
+
+{{ if $d.ActiveReviews }}
+<div class="card mb-4">
+  <div class="card-body">
+    <h2 class="h6 card-title mb-3">Reviews in progress</h2>
+    <div class="d-flex flex-column gap-3">
+      {{ range $d.ActiveReviews }}
+      <div>
+        <div class="d-flex flex-wrap justify-content-between align-items-baseline gap-2 mb-1">
+          <a class="fw-semibold text-decoration-none" href="/assessments/{{ .AssessmentID }}">{{ .AssessmentTitle }}</a>
+          <span class="text-secondary small">{{ .VendorName }} &middot; {{ jobStatusLabel .Job.Status }}</span>
+        </div>
+        <div class="progress" role="progressbar" aria-label="Review progress"
+             aria-valuenow="{{ jobPercent .Job }}" aria-valuemin="0" aria-valuemax="100" style="height: .5rem;">
+          <div class="progress-bar progress-bar-striped progress-bar-animated {{ progressClass .Job.Status }}"
+               style="width: {{ jobPercent .Job }}%"></div>
+        </div>
+        <div class="text-secondary small mt-1">{{ .Job.Stage }} &middot; {{ .Job.DoneQuestions }}/{{ .Job.TotalQuestions }}</div>
+      </div>
+      {{ end }}
+    </div>
+  </div>
+</div>
+{{ end }}
+
+{{ if $d.NeedsAttention }}
+<div class="card mb-4">
+  <div class="card-body">
+    <h2 class="h6 card-title mb-1">Needs attention</h2>
+    <p class="text-secondary small mb-3">The reviewed assessments with the most flags and the highest risk.</p>
+    {{ template "assessment_table" (dict "Assessments" $d.NeedsAttention) }}
+  </div>
+</div>
+{{ end }}
+
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex flex-wrap justify-content-between align-items-baseline gap-2 mb-3">
+      <h2 class="h6 card-title mb-0">Recent assessments</h2>
+      <a class="small text-decoration-none" href="/assessments">View all</a>
+    </div>
+    {{ template "assessment_table" (dict "Assessments" $d.RecentAssessments) }}
+  </div>
+</div>
+{{ end }}
