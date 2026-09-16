@@ -10,16 +10,6 @@ import (
 	"third-party-review/internal/service"
 )
 
-// Step 1 - Define the Dependency Interface.
-//
-// Deps names every contract this service needs and nothing more. It takes the
-// individual repository interfaces rather than the whole repository.Repositories
-// bundle, so the dependency list is honest: a reader can see at a glance that
-// ingestion touches vendors, assessments, questions, domains, results and
-// rubrics, and that it does not touch jobs, users or sessions.
-//
-// Each field is an interface, so any of them can be replaced by a fake in a
-// test without a database.
 type Deps struct {
 	Tx          helper.TxManager
 	Vendors     repository.VendorRepository

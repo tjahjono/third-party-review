@@ -53,7 +53,6 @@ var ErrMFARequired = errors.New("mfa required")
 // ErrInvalidMFACode is returned for a wrong or reused authenticator code.
 var ErrInvalidMFACode = errors.New("invalid authenticator code")
 
-// Step 3 - Implement the Struct and its Methods.
 type Service struct {
 	users         repository.UserRepository
 	sessions      repository.SessionRepository
@@ -62,7 +61,6 @@ type Service struct {
 	log           *slog.Logger
 }
 
-// Step 4 - Constructor ensuring the dependency is injected.
 func New(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err

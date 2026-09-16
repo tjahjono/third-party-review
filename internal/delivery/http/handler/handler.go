@@ -23,10 +23,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Step 3 - Implement the Struct and its Methods.
-//
-// The fields are unexported: once the handler set is constructed, nothing can
-// reach in and replace a service on a running server.
 type Handler struct {
 	assessments service.AssessmentFacade
 	reviews     service.ReviewService
@@ -36,11 +32,6 @@ type Handler struct {
 	log         *slog.Logger
 }
 
-// Step 4 - Constructor ensuring the dependency is injected.
-//
-// New returns an error rather than accepting a half-built Deps, so a wiring
-// mistake fails at startup naming the missing dependency instead of panicking
-// on whichever request reaches it first.
 func New(d Deps) (*Handler, error) {
 	if err := d.validate(); err != nil {
 		return nil, err
@@ -71,10 +62,6 @@ func MustNew(d Deps) *Handler {
 
 // defaultSessionTTL applies when none is configured.
 const defaultSessionTTL = 12 * time.Hour
-
-// ---------------------------------------------------------------------------
-// Template rendering
-// ---------------------------------------------------------------------------
 
 // Renderer parses and executes the template set. Each page is parsed together
 // with the layout and every partial, so a partial can be rendered on its own
@@ -139,10 +126,6 @@ func fileBase(p string) string {
 	}
 	return p
 }
-
-// ---------------------------------------------------------------------------
-// Response helpers
-// ---------------------------------------------------------------------------
 
 // pageData is the envelope every full page render receives.
 type pageData struct {
@@ -258,10 +241,6 @@ func (h *Handler) redirect(w http.ResponseWriter, r *http.Request, url string) {
 	}
 	http.Redirect(w, r, url, http.StatusSeeOther)
 }
-
-// ---------------------------------------------------------------------------
-// Request parsing helpers
-// ---------------------------------------------------------------------------
 
 // pathID reads a uuid path parameter.
 //

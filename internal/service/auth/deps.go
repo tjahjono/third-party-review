@@ -9,12 +9,6 @@ import (
 	"third-party-review/internal/repository"
 )
 
-// Step 1 - Define the Dependency Interface.
-//
-// Authentication needs two repositories and nothing else. Keeping the list
-// this short is the point: an auth service that could reach assessments or
-// questions would be a much larger thing to reason about when reviewing who
-// can read what.
 type Deps struct {
 	Users    repository.UserRepository
 	Sessions repository.SessionRepository

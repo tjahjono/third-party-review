@@ -11,12 +11,6 @@ import (
 	"third-party-review/internal/service"
 )
 
-// Step 1 - Define the Dependency Interface.
-//
-// The review pipeline needs the assessment and question repositories to read
-// from, the result, summary and job repositories to write to, a rubric lookup,
-// a transaction manager, and one AIReviewer. It deliberately does not take the
-// vendor, user or session repositories: nothing in a review run touches them.
 type Deps struct {
 	Tx          helper.TxManager
 	Assessments repository.AssessmentRepository

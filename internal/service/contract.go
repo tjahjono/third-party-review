@@ -132,6 +132,5 @@ type AIReviewer interface {
 type QuestionnaireParser interface {
 	Parse(r io.Reader, filename string, domains []*model.AssessmentDomain) (*dto.IngestPreview, error)
 	PreviewGrid(grid *dto.Grid, domains []*model.AssessmentDomain) (*dto.IngestPreview, error)
-	Apply(grid *dto.Grid, mapping *model.ColumnMapping, domains []*model.AssessmentDomain,
-		domainOverride map[int]uuid.UUID, assessmentID uuid.UUID) ([]*model.Question, []dto.Section, error)
+	Apply(grid *dto.Grid, mapping *model.ColumnMapping, domains []*model.AssessmentDomain, domainOverride map[int]uuid.UUID, assessmentID uuid.UUID) ([]*model.Question, []dto.Section, error)
 }

@@ -9,15 +9,6 @@ import (
 	"third-party-review/internal/service"
 )
 
-// Step 1 - Define the Dependency Interface.
-//
-// The handlers depend on the service contracts declared in internal/domain and
-// on nothing concrete. That is what lets a handler test run with stubs and no
-// database, AI provider or background worker.
-//
-// Assessments is the union facade; the narrower contracts behind it
-// (VendorService, IngestService, SignOffService, RubricService) are what a
-// test should stub, one concern at a time.
 type Deps struct {
 	Assessments service.AssessmentFacade
 	Reviews     service.ReviewService

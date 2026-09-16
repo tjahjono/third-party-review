@@ -27,10 +27,6 @@ const lowConfidence = 0.35
 // so a large questionnaire cannot blow the context window.
 const peerSampleSize = 12
 
-// Step 3 - Implement the Struct and its Methods.
-//
-// Every field is an interface from Deps, held unexported so nothing can swap a
-// dependency out from under a running review.
 type Service struct {
 	tx          helper.TxManager
 	assessments repository.AssessmentRepository
@@ -44,7 +40,6 @@ type Service struct {
 	log         *slog.Logger
 }
 
-// Step 4 - Constructor ensuring the dependency is injected.
 func New(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
@@ -403,10 +398,6 @@ func (s *Service) RecomputeSummary(ctx context.Context, assessmentID uuid.UUID) 
 	}
 	return summary, nil
 }
-
-// ---------------------------------------------------------------------------
-// Batching helpers
-// ---------------------------------------------------------------------------
 
 type domainGroup struct {
 	domainID   uuid.UUID

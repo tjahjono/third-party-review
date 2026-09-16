@@ -25,12 +25,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Service implements vendor and assessment use cases.
-// Step 3 - Implement the Struct and its Methods.
-//
-// Every field is an interface from Deps and is unexported: once constructed,
-// nothing outside this package can swap a dependency out from under a running
-// service.
 type Service struct {
 	tx                helper.TxManager
 	vendors           repository.VendorRepository
@@ -46,10 +40,6 @@ type Service struct {
 	log               *slog.Logger
 }
 
-// Step 4 - Constructor ensuring the dependency is injected.
-//
-// New returns an error rather than panicking or accepting a half-built Deps,
-// so an incomplete wiring fails at startup naming the missing dependency.
 func New(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
@@ -79,10 +69,6 @@ func MustNew(deps Deps) *Service {
 	}
 	return s
 }
-
-// ---------------------------------------------------------------------------
-// Vendors
-// ---------------------------------------------------------------------------
 
 // CreateVendor registers a third party.
 func (s *Service) CreateVendor(ctx context.Context, v *model.Vendor) error {
@@ -129,10 +115,6 @@ func (s *Service) DeleteVendor(ctx context.Context, id uuid.UUID) error {
 	return s.vendors.Delete(ctx, id)
 }
 
-// ---------------------------------------------------------------------------
-// Assessments
-// ---------------------------------------------------------------------------
-
 // ListAssessments returns assessments matching a filter, with the total count.
 func (s *Service) ListAssessments(ctx context.Context, f dto.AssessmentFilter) ([]*model.Assessment, int, error) {
 	items, err := s.assessments.List(ctx, f)
@@ -169,10 +151,6 @@ func (s *Service) DeleteAssessment(ctx context.Context, id uuid.UUID) error {
 func (s *Service) ListDomains(ctx context.Context) ([]*model.AssessmentDomain, error) {
 	return s.domains.List(ctx, false)
 }
-
-// ---------------------------------------------------------------------------
-// Ingestion
-// ---------------------------------------------------------------------------
 
 // maxUploadBytes is a hard ceiling applied regardless of the configured
 // multipart limit, so a pathological file cannot be read fully into memory.
@@ -421,10 +399,6 @@ func isExcel(filename string) bool {
 		strings.HasSuffix(lower, ".xlsm") ||
 		strings.HasSuffix(lower, ".xltx")
 }
-
-// ---------------------------------------------------------------------------
-// Rubrics
-// ---------------------------------------------------------------------------
 
 // AttachRubric stores a rubric and binds it to an assessment. A rubric with
 // no ID is created first; one with an ID is attached as-is, which is how a
