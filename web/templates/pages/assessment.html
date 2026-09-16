@@ -110,7 +110,7 @@
       <div class="col-12 col-sm-6 col-lg-4">
         <select class="form-select" name="domain" aria-label="Filter by domain"
                 hx-get="/assessments/{{ $a.ID }}/questions"
-                hx-include="[name='review_status'],[name='flagged']"
+                hx-include="[name='review_status'],[name='concern']"
                 hx-target="#question-list"
                 hx-swap="outerHTML">
           <option value="">All domains</option>
@@ -123,7 +123,7 @@
       <div class="col-12 col-sm-6 col-lg-4">
         <select class="form-select" name="review_status" aria-label="Filter by review state"
                 hx-get="/assessments/{{ $a.ID }}/questions"
-                hx-include="[name='domain'],[name='flagged']"
+                hx-include="[name='domain'],[name='concern']"
                 hx-target="#question-list"
                 hx-swap="outerHTML">
           <option value="">Any review state</option>
@@ -133,15 +133,15 @@
         </select>
       </div>
       <div class="col-12 col-lg-4">
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" name="flagged" value="1" id="flaggedonly"
-                 {{ if $d.FlaggedOnly }}checked{{ end }}
-                 hx-get="/assessments/{{ $a.ID }}/questions"
-                 hx-include="[name='domain'],[name='review_status']"
-                 hx-target="#question-list"
-                 hx-swap="outerHTML">
-          <label class="form-check-label" for="flaggedonly">Flagged only</label>
-        </div>
+        <select class="form-select" name="concern" aria-label="Filter by AI concern"
+                hx-get="/assessments/{{ $a.ID }}/questions"
+                hx-include="[name='domain'],[name='review_status']"
+                hx-target="#question-list"
+                hx-swap="outerHTML">
+          <option value="">Any AI concern</option>
+          <option value="flagged" {{ if eq $d.FilterConcern "flagged" }}selected{{ end }}>Flagged only</option>
+          <option value="clean"   {{ if eq $d.FilterConcern "clean"   }}selected{{ end }}>No concern only</option>
+        </select>
       </div>
     </div>
 

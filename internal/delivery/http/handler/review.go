@@ -21,9 +21,9 @@ type resultsView struct {
 	Job        *model.ReviewJob
 	Rubric     *model.Rubric
 	// Filter state, so the view keeps the user's narrowing across swaps.
-	FilterDomain string
-	FilterStatus string
-	FlaggedOnly  bool
+	FilterDomain  string
+	FilterStatus  string
+	FilterConcern string
 	// Polling is true while a review is queued or running, so a page loaded
 	// mid-review keeps the progress panel updating.
 	Polling bool
@@ -106,8 +106,19 @@ func (h *Handler) buildResultsView(r *http.Request, id uuid.UUID) (*resultsView,
 			f.ReviewStatus = &s
 		}
 	}
-	flaggedOnly := q.Get("flagged") == "1"
-	f.FlaggedOnly = flaggedOnly
+	// concern narrows by what the AI made of the answer: "flagged" for
+	// anything that raised a concern, "clean" for its complement - answers
+	// the AI reviewed and found nothing wrong with. Anything else (including
+	// not yet reviewed) is left out of both.
+	filterConcern := strings.TrimSpace(q.Get("concern"))
+	switch filterConcern {
+	case "flagged":
+		f.FlaggedOnly = true
+	case "clean":
+		f.NoConcernOnly = true
+	default:
+		filterConcern = ""
+	}
 
 	questions, err := h.assessments.ListQuestions(ctx, f)
 	if err != nil {
@@ -120,17 +131,17 @@ func (h *Handler) buildResultsView(r *http.Request, id uuid.UUID) (*resultsView,
 	}
 
 	view := &resultsView{
-		Assessment:   a,
-		Questions:    questions,
-		Domains:      domains,
-		Summary:      a.Summary,
-		FilterDomain: filterDomain,
-		FilterStatus: filterStatus,
-		FlaggedOnly:  flaggedOnly,
-		Progress:     progress,
-		Closed:       a.Status == model.StatusClosed,
-		User:         middleware.UserFrom(ctx),
-		CSRFToken:    middleware.CSRFTokenFrom(ctx),
+		Assessment:    a,
+		Questions:     questions,
+		Domains:       domains,
+		Summary:       a.Summary,
+		FilterDomain:  filterDomain,
+		FilterStatus:  filterStatus,
+		FilterConcern: filterConcern,
+		Progress:      progress,
+		Closed:        a.Status == model.StatusClosed,
+		User:          middleware.UserFrom(ctx),
+		CSRFToken:     middleware.CSRFTokenFrom(ctx),
 	}
 
 	if job, err := h.reviews.Status(ctx, id); err == nil {

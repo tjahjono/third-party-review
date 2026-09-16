@@ -23,10 +23,9 @@ import (
 // aggregate is therefore a blend of the mean and the mean of the worst
 // quintile, weighted towards the latter.
 const (
-	worstCaseWeight  = 0.6
-	worstQuintile    = 0.2
-	minWorstSampleN  = 1
-	flaggedThreshold = model.RiskScore(4)
+	worstCaseWeight = 0.6
+	worstQuintile   = 0.2
+	minWorstSampleN = 1
 )
 
 // Aggregate computes per-domain and assessment-level scores from the latest
@@ -74,7 +73,7 @@ func Aggregate(questions []*model.Question, results map[uuid.UUID]*model.ReviewR
 				summary.WorstScore = r.RiskScore
 			}
 		}
-		if len(r.Flags) > 0 || r.RiskScore >= flaggedThreshold {
+		if len(r.Flags) > 0 || r.RiskScore >= model.RiskFlagThreshold {
 			b.flagged++
 			summary.FlaggedCount++
 		}

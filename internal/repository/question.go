@@ -152,13 +152,32 @@ func (r *questionRepository) List(ctx context.Context, f dto.QuestionFilter) ([]
 		args = append(args, string(*f.ReviewStatus))
 		clauses = append(clauses, fmt.Sprintf("q.review_status = $%d", len(args)))
 	}
-	// Flag and score filters look at the newest result for each question.
+	// Flag, concern and score filters all look at the same row: the newest
+	// result for the question, exactly what Aggregate scores from - so a
+	// reviewer filtering here always sees the same population the summary
+	// panel counted them under (see model.RiskFlagThreshold).
+	const latestResult = `(
+		SELECT rr.flags, rr.risk_score
+		  FROM review_results rr
+		 WHERE rr.question_id = q.id
+		 ORDER BY rr.created_at DESC, rr.id DESC
+		 LIMIT 1)`
 	if f.FlaggedOnly {
-		clauses = append(clauses, `EXISTS (
-			SELECT 1 FROM review_results rr
-			 WHERE rr.question_id = q.id
-			   AND jsonb_array_length(rr.flags) > 0
-			 ORDER BY rr.created_at DESC LIMIT 1)`)
+		clauses = append(clauses, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM %s latest
+			 WHERE jsonb_array_length(latest.flags) > 0 OR latest.risk_score >= %d)`,
+			latestResult, int(model.RiskFlagThreshold)))
+	}
+	if f.NoConcernOnly {
+		// A question with no result yet, or one the model returned an
+		// unparseable/absent score for (risk_score 0), is neither flagged nor
+		// clean - it just hasn't been meaningfully reviewed, so it must not
+		// show up here as if the AI had looked and found nothing wrong.
+		clauses = append(clauses, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM %s latest
+			 WHERE jsonb_array_length(latest.flags) = 0
+			   AND latest.risk_score BETWEEN %d AND %d)`,
+			latestResult, int(model.RiskMin), int(model.RiskFlagThreshold)-1))
 	}
 	if f.MinRiskScore != nil {
 		args = append(args, *f.MinRiskScore)

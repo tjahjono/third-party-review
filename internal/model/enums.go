@@ -42,6 +42,12 @@ type RiskScore int
 const (
 	RiskMin RiskScore = 1
 	RiskMax RiskScore = 5
+	// RiskFlagThreshold is the score at or above which an answer counts as
+	// "flagged" even without an explicit flag - the single definition shared
+	// by the summary aggregate (AssessmentSummary.FlaggedCount) and the
+	// question list's flagged/no-concern filters, so what a reviewer sees
+	// counted in the summary panel matches what they see when they filter.
+	RiskFlagThreshold RiskScore = 4
 )
 
 // RiskBand is the coarse label shown in the UI, derived from the numeric
