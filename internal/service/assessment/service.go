@@ -417,6 +417,21 @@ func (s *Service) AttachRubric(ctx context.Context, assessmentID uuid.UUID, rubr
 	})
 }
 
+// UpdateRubric saves edits to an existing rubric's name, content and reusable
+// flag in place, rather than replacing it with a new row.
+func (s *Service) UpdateRubric(ctx context.Context, rubric *model.Rubric) error {
+	if rubric.ID == uuid.Nil {
+		return helper.ValidationError{Field: "rubric", Message: "There is no rubric to update."}
+	}
+	if strings.TrimSpace(rubric.Name) == "" {
+		return helper.ValidationError{Field: "name", Message: "Rubric name can't be empty."}
+	}
+	if strings.TrimSpace(rubric.Content) == "" {
+		return helper.ValidationError{Field: "content", Message: "Rubric content can't be empty."}
+	}
+	return s.rubrics.Update(ctx, rubric)
+}
+
 // DetachRubric unbinds the rubric from an assessment.
 func (s *Service) DetachRubric(ctx context.Context, assessmentID uuid.UUID) error {
 	return s.assessmentRubrics.Detach(ctx, assessmentID)

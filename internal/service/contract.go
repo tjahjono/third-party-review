@@ -54,6 +54,11 @@ type SignOffService interface {
 // RubricService manages the optional policy an assessment is judged against.
 type RubricService interface {
 	AttachRubric(ctx context.Context, assessmentID uuid.UUID, rubric *model.Rubric) error
+	// UpdateRubric saves edits to an already-attached rubric in place. Because
+	// a reusable rubric can be attached to more than one assessment, this
+	// updates the shared rubrics row - every assessment using it sees the
+	// change, rather than only the one it was edited from.
+	UpdateRubric(ctx context.Context, rubric *model.Rubric) error
 	DetachRubric(ctx context.Context, assessmentID uuid.UUID) error
 	GetRubric(ctx context.Context, assessmentID uuid.UUID) (*model.Rubric, error)
 	ListReusableRubrics(ctx context.Context) ([]*model.Rubric, error)

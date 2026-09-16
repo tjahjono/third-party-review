@@ -118,7 +118,10 @@ func NewRouter(d Deps) http.Handler {
 				// Rubric
 				r.Get("/rubric", h.RubricPanel)
 				r.Post("/rubric", h.AttachRubric)
+				r.Put("/rubric", h.UpdateRubric)
 				r.Delete("/rubric", h.DetachRubric)
+				r.Get("/rubric/edit", h.EditRubric)
+				r.Get("/rubric/cancel", h.CancelEditRubric)
 			})
 		})
 

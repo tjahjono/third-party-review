@@ -68,6 +68,9 @@ type Routes interface {
 	// Rubric
 	RubricPanel(w http.ResponseWriter, r *http.Request)
 	AttachRubric(w http.ResponseWriter, r *http.Request)
+	EditRubric(w http.ResponseWriter, r *http.Request)
+	CancelEditRubric(w http.ResponseWriter, r *http.Request)
+	UpdateRubric(w http.ResponseWriter, r *http.Request)
 	DetachRubric(w http.ResponseWriter, r *http.Request)
 }
 

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -19,6 +20,14 @@ func (h *Handler) AttachRubric(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	// Fetched up front only for the default name below - an assessment and
+	// its vendor read far better there than the assessment's bare id.
+	assessment, err := h.assessments.GetAssessment(r.Context(), id)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
 	// Accept either a pasted textarea or an uploaded text file.
 	content := ""
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -39,7 +48,7 @@ func (h *Handler) AttachRubric(w http.ResponseWriter, r *http.Request) {
 		content = r.FormValue("content")
 	}
 	if name == "" {
-		name = "Rubric for assessment " + uuidStr(id)
+		name = fmt.Sprintf("Rubric for %s (%s)", assessment.Title, assessment.VendorName)
 	}
 
 	rubric := &model.Rubric{
@@ -52,6 +61,69 @@ func (h *Handler) AttachRubric(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.renderPartial(w, r, http.StatusOK, "rubric_panel", rubricView{AssessmentID: id, Rubric: rubric})
+}
+
+// EditRubric swaps the read-only rubric summary for the edit form,
+// pre-filled with its current name, content and reusable flag.
+func (h *Handler) EditRubric(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "assessmentID")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	rubric, err := h.assessments.GetRubric(r.Context(), id)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.renderPartial(w, r, http.StatusOK, "rubric_panel", rubricView{AssessmentID: id, Rubric: rubric, Editing: true})
+}
+
+// CancelEditRubric reverts to the read-only summary without saving anything.
+func (h *Handler) CancelEditRubric(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "assessmentID")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	view := rubricView{AssessmentID: id}
+	rubric, err := h.assessments.GetRubric(r.Context(), id)
+	if err == nil {
+		view.Rubric = rubric
+	} else if !errors.Is(err, helper.ErrNotFound) {
+		h.fail(w, r, err)
+		return
+	}
+	h.renderPartial(w, r, http.StatusOK, "rubric_panel", view)
+}
+
+// UpdateRubric saves edits to the assessment's currently attached rubric.
+func (h *Handler) UpdateRubric(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "assessmentID")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
+		return
+	}
+	current, err := h.assessments.GetRubric(r.Context(), id)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	updated := &model.Rubric{
+		ID:       current.ID,
+		Name:     strings.TrimSpace(r.FormValue("name")),
+		Content:  r.FormValue("content"),
+		Reusable: r.FormValue("reusable") == "on" || r.FormValue("reusable") == "1",
+	}
+	if err := h.assessments.UpdateRubric(r.Context(), updated); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.renderPartial(w, r, http.StatusOK, "rubric_panel", rubricView{AssessmentID: id, Rubric: updated})
 }
 
 // DetachRubric removes the rubric from an assessment. The rubric itself is
@@ -73,6 +145,8 @@ type rubricView struct {
 	AssessmentID uuid.UUID
 	Rubric       *model.Rubric
 	Reusable     []*model.Rubric
+	// Editing shows the edit form in place of the read-only summary.
+	Editing bool
 }
 
 // RubricPanel renders the current rubric state for the assessment page.
