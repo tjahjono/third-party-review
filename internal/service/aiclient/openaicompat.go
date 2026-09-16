@@ -47,142 +47,6 @@ func NewOpenAICompat(cfg config.AI, log *slog.Logger) AIReviewer {
 	}
 }
 
-// Name identifies the provider on persisted results.
-func (c *openAICompat) Name() string { return c.name }
-
-func (c *openAICompat) endpoint() string {
-	base := strings.TrimRight(c.cfg.BaseURL, "/")
-	path := c.cfg.ChatPath
-	if path == "" {
-		path = "/chat/completions"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return base + path
-}
-
-type oaMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type oaRequest struct {
-	Model          string          `json:"model"`
-	Messages       []oaMessage     `json:"messages"`
-	Temperature    float64         `json:"temperature"`
-	MaxTokens      int             `json:"max_tokens,omitempty"`
-	Stream         bool            `json:"stream"`
-	ResponseFormat *oaResponseForm `json:"response_format,omitempty"`
-}
-
-type oaResponseForm struct {
-	Type string `json:"type"`
-}
-
-type oaResponse struct {
-	Choices []struct {
-		Message      oaMessage `json:"message"`
-		FinishReason string    `json:"finish_reason"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	} `json:"error"`
-}
-
-// complete sends one chat completion and returns the assistant text. wantJSON
-// asks the backend for JSON mode where it supports it.
-func (c *openAICompat) complete(ctx context.Context, system, user string, wantJSON bool) (string, error) {
-	reqBody := oaRequest{
-		Model:       c.cfg.Model,
-		Temperature: c.cfg.Temperature,
-		MaxTokens:   c.cfg.MaxTokens,
-		Stream:      false,
-		Messages: []oaMessage{
-			{Role: "system", Content: system},
-			{Role: "user", Content: user},
-		},
-	}
-	if wantJSON {
-		reqBody.ResponseFormat = &oaResponseForm{Type: "json_object"}
-	}
-
-	var lastErr error
-	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
-		if attempt > 0 {
-			// Linear backoff is enough for a single team's request volume.
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(time.Duration(attempt) * 2 * time.Second):
-			}
-		}
-		text, err := c.do(ctx, reqBody)
-		if err == nil {
-			return text, nil
-		}
-		lastErr = err
-		if !retryable(err) {
-			return "", err
-		}
-		// A backend that rejects response_format outright should still be
-		// usable; drop it and let ExtractJSON do the work.
-		if reqBody.ResponseFormat != nil && isBadRequest(err) {
-			c.log.Warn("provider rejected response_format, retrying without JSON mode", "error", err)
-			reqBody.ResponseFormat = nil
-		}
-		c.log.Warn("AI request failed, retrying", "attempt", attempt+1, "error", err)
-	}
-	return "", fmt.Errorf("ai: request failed after %d attempts: %w", c.cfg.MaxRetries+1, lastErr)
-}
-
-func (c *openAICompat) do(ctx context.Context, body oaRequest) (string, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return "", fmt.Errorf("ai: encode request: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(payload))
-	if err != nil {
-		return "", fmt.Errorf("ai: build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if c.hasKey {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", &transportError{err: err}
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return "", &transportError{err: err}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", &httpError{status: resp.StatusCode, body: string(raw), endpoint: c.endpoint()}
-	}
-
-	var parsed oaResponse
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", fmt.Errorf("ai: decode response (is %s an OpenAI-compatible endpoint?): %w", c.endpoint(), err)
-	}
-	if parsed.Error != nil && parsed.Error.Message != "" {
-		return "", fmt.Errorf("ai: provider error: %s", parsed.Error.Message)
-	}
-	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("ai: provider returned no choices")
-	}
-	if fr := parsed.Choices[0].FinishReason; fr == "length" {
-		c.log.Warn("model output was truncated by the token limit; raise AI_MAX_TOKENS or lower AI_BATCH_SIZE",
-			"max_tokens", c.cfg.MaxTokens)
-	}
-	return parsed.Choices[0].Message.Content, nil
-}
-
 // ReviewAnswer evaluates a single answer.
 func (c *openAICompat) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
 	text, err := c.complete(ctx, systemPrompt, BuildSingle(req), true)
@@ -223,6 +87,113 @@ func (c *openAICompat) Summarize(ctx context.Context, req dto.SummaryRequest) (s
 		return "", err
 	}
 	return strings.TrimSpace(stripFences(text)), nil
+}
+
+// Name identifies the provider on persisted results.
+func (c *openAICompat) Name() string { return c.name }
+
+func (c *openAICompat) endpoint() string {
+	base := strings.TrimRight(c.cfg.BaseURL, "/")
+	path := c.cfg.ChatPath
+	if path == "" {
+		path = "/chat/completions"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return base + path
+}
+
+// complete sends one chat completion and returns the assistant text. wantJSON
+// asks the backend for JSON mode where it supports it.
+func (c *openAICompat) complete(ctx context.Context, system, user string, wantJSON bool) (string, error) {
+	reqBody := model.OaRequest{
+		Model:       c.cfg.Model,
+		Temperature: c.cfg.Temperature,
+		MaxTokens:   c.cfg.MaxTokens,
+		Stream:      false,
+		Messages: []model.OaMessage{
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
+		},
+	}
+	if wantJSON {
+		reqBody.ResponseFormat = &model.OaResponseForm{Type: "json_object"}
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
+		if attempt > 0 {
+			// Linear backoff is enough for a single team's request volume.
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
+		}
+		text, err := c.do(ctx, reqBody)
+		if err == nil {
+			return text, nil
+		}
+		lastErr = err
+		if !retryable(err) {
+			return "", err
+		}
+		// A backend that rejects response_format outright should still be
+		// usable; drop it and let ExtractJSON do the work.
+		if reqBody.ResponseFormat != nil && isBadRequest(err) {
+			c.log.Warn("provider rejected response_format, retrying without JSON mode", "error", err)
+			reqBody.ResponseFormat = nil
+		}
+		c.log.Warn("AI request failed, retrying", "attempt", attempt+1, "error", err)
+	}
+	return "", fmt.Errorf("ai: request failed after %d attempts: %w", c.cfg.MaxRetries+1, lastErr)
+}
+
+func (c *openAICompat) do(ctx context.Context, body model.OaRequest) (string, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("ai: encode request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("ai: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if c.hasKey {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", &transportError{err: err}
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return "", &transportError{err: err}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", &httpError{status: resp.StatusCode, body: string(raw), endpoint: c.endpoint()}
+	}
+
+	var parsed model.OaResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", fmt.Errorf("ai: decode response (is %s an OpenAI-compatible endpoint?): %w", c.endpoint(), err)
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return "", fmt.Errorf("ai: provider error: %s", parsed.Error.Message)
+	}
+	if len(parsed.Choices) == 0 {
+		return "", fmt.Errorf("ai: provider returned no choices")
+	}
+	if fr := parsed.Choices[0].FinishReason; fr == "length" {
+		c.log.Warn("model output was truncated by the token limit; raise AI_MAX_TOKENS or lower AI_BATCH_SIZE",
+			"max_tokens", c.cfg.MaxTokens)
+	}
+	return parsed.Choices[0].Message.Content, nil
 }
 
 const summarySystemPrompt = `You are an experienced third-party security assessor writing the executive summary of a completed vendor assessment for an internal risk file. You write plainly and specifically, never inflate or soften findings, and never introduce facts you were not given.`
