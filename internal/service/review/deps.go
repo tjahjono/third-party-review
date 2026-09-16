@@ -8,7 +8,7 @@ import (
 	"third-party-review/internal/config"
 	"third-party-review/internal/helper"
 	"third-party-review/internal/repository"
-	"third-party-review/internal/service"
+	"third-party-review/internal/service/aiclient"
 )
 
 type Deps struct {
@@ -23,7 +23,7 @@ type Deps struct {
 	// Reviewer is the provider-agnostic contract. Which concrete client sits
 	// behind it - Open WebUI, OpenAI, Anthropic, the offline mock - is decided
 	// at wiring time and is invisible here.
-	Reviewer service.AIReviewer
+	Reviewer aiclient.AIReviewer
 
 	Config config.AI
 	Log    *slog.Logger
@@ -62,7 +62,7 @@ func (d Deps) validate() error {
 
 // FromRepositories builds Deps from the full repository set held by the main
 // package.
-func FromRepositories(repos *repository.Repositories, reviewer service.AIReviewer, cfg config.AI, log *slog.Logger) Deps {
+func FromRepositories(repos *repository.Repositories, reviewer aiclient.AIReviewer, cfg config.AI, log *slog.Logger) Deps {
 	if repos == nil {
 		return Deps{Reviewer: reviewer, Config: cfg, Log: log}
 	}

@@ -8,17 +8,16 @@ import (
 	"third-party-review/internal/dto"
 	"third-party-review/internal/helper"
 	"third-party-review/internal/model"
-	"third-party-review/internal/service"
 
 	"github.com/google/uuid"
 )
 
-// Mock is a deterministic AIReviewer used by tests and by local development
+// mock is a deterministic AIReviewer used by tests and by local development
 // without an API key. It applies a handful of the heuristics a real reviewer
 // would, so the rest of the pipeline - scoring, aggregation, flags, drafts,
 // progress - can be exercised end to end and asserted on. It is not a
 // substitute for a model: it does not read for meaning.
-type Mock struct {
+type mock struct {
 	// FailOn, when set, makes ReviewBatch return an error for any batch that
 	// contains a question whose text contains this string. Used to test the
 	// per-question fallback path and job failure handling.
@@ -28,11 +27,13 @@ type Mock struct {
 	SkipQuestionIDs map[uuid.UUID]bool
 }
 
-// NewMock constructs the mock reviewer.
-func NewMock() *Mock { return &Mock{} }
+// NewMock constructs the mock reviewer. It returns the concrete type, not
+// AIReviewer, because tests need direct access to FailOn and
+// SkipQuestionIDs to script its behaviour.
+func NewMock() *mock { return &mock{} }
 
 // Name identifies the provider on persisted results.
-func (m *Mock) Name() string { return "mock" }
+func (m *mock) Name() string { return "mock" }
 
 // vagueMarkers are the phrases a human assessor learns to distrust.
 var vagueMarkers = []string{
@@ -42,12 +43,12 @@ var vagueMarkers = []string{
 }
 
 // ReviewAnswer scores one answer with simple, explainable rules.
-func (m *Mock) ReviewAnswer(_ context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
+func (m *mock) ReviewAnswer(_ context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
 	return m.score(req.Question), nil
 }
 
 // ReviewBatch scores every question in the batch.
-func (m *Mock) ReviewBatch(_ context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
+func (m *mock) ReviewBatch(_ context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
 	if m.FailOn != "" {
 		for _, q := range req.Questions {
 			if strings.Contains(q.QuestionText, m.FailOn) {
@@ -69,7 +70,7 @@ func (m *Mock) ReviewBatch(_ context.Context, req dto.BatchReviewRequest) (dto.B
 }
 
 // Summarize writes a deterministic narrative from the supplied aggregates.
-func (m *Mock) Summarize(_ context.Context, req dto.SummaryRequest) (string, error) {
+func (m *mock) Summarize(_ context.Context, req dto.SummaryRequest) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s presents %s residual risk overall, scoring %.2f out of 5 across %d reviewed answers. ",
 		orDash(req.VendorName), strings.ToLower(helper.RiskBandLabel(helper.BandFromFloat(req.OverallScore))),
@@ -94,7 +95,7 @@ func (m *Mock) Summarize(_ context.Context, req dto.SummaryRequest) (string, err
 
 // score applies the rule set. It mirrors the scale the real system prompt
 // describes so fixtures and expectations stay consistent across providers.
-func (m *Mock) score(q dto.QuestionContext) model.ReviewResult {
+func (m *mock) score(q dto.QuestionContext) model.ReviewResult {
 	answer := strings.TrimSpace(q.ThirdPartyAnswer)
 	lower := strings.ToLower(answer)
 
@@ -175,4 +176,4 @@ func isVague(lowerAnswer string) bool {
 	return false
 }
 
-var _ service.AIReviewer = (*Mock)(nil)
+var _ AIReviewer = (*mock)(nil)

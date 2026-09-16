@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"third-party-review/internal/service"
 	"third-party-review/internal/service/aiclient"
 
 	"github.com/google/uuid"
@@ -10,11 +9,11 @@ import (
 // newMock returns the deterministic reviewer shipped with the app. Using the
 // production mock rather than a test-local double means these tests exercise
 // exactly the code path a developer gets with AI_PROVIDER=mock.
-func newMock() service.AIReviewer { return aiclient.NewMock() }
+func newMock() aiclient.AIReviewer { return aiclient.NewMock() }
 
 // newFailingMock returns a mock whose batch call fails for any batch
 // containing the given text, so the per-question fallback can be tested.
-func newFailingMock(failOn string) service.AIReviewer {
+func newFailingMock(failOn string) aiclient.AIReviewer {
 	m := aiclient.NewMock()
 	m.FailOn = failOn
 	return m
@@ -22,7 +21,7 @@ func newFailingMock(failOn string) service.AIReviewer {
 
 // newDroppingMock returns a mock that silently omits the given question ids
 // from batch responses, simulating a model that loses items.
-func newDroppingMock(ids ...uuid.UUID) service.AIReviewer {
+func newDroppingMock(ids ...uuid.UUID) aiclient.AIReviewer {
 	m := aiclient.NewMock()
 	m.SkipQuestionIDs = map[uuid.UUID]bool{}
 	for _, id := range ids {

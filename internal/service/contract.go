@@ -101,30 +101,6 @@ type AuthService interface {
 	RegenerateRecoveryCodes(ctx context.Context, userID uuid.UUID, password string) ([]string, error)
 }
 
-// AIReviewer is the provider-agnostic contract for AI-assisted review. Every
-// concrete client (Open WebUI / Qwen, OpenAI, Anthropic, mock) implements it,
-// so the service layer never learns which provider is configured.
-type AIReviewer interface {
-	// ReviewBatch evaluates a group of answers together, which lets the model
-	// spot contradictions between answers in the same assessment. Results are
-	// returned keyed by QuestionID; a missing key means the model did not
-	// return a usable result for that question and it should be retried
-	// individually.
-	ReviewBatch(ctx context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error)
-
-	// ReviewAnswer evaluates one answer on its own. Used as a follow-up for
-	// questions the batch pass skipped or scored with low confidence.
-	ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (model.ReviewResult, error)
-
-	// Summarize writes the assessment-level narrative from the per-question
-	// findings. Aggregated numbers are computed in Go, not by the model.
-	Summarize(ctx context.Context, req dto.SummaryRequest) (string, error)
-
-	// Name identifies the provider for logging and for the Provider column on
-	// persisted results.
-	Name() string
-}
-
 // QuestionnaireParser turns an uploaded file into a confirmable preview and,
 // once a mapping is confirmed, into persistable questions. Declaring it here
 // lets the ingestion service be tested against a stub parser, and lets the

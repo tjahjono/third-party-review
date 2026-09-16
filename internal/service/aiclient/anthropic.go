@@ -14,23 +14,22 @@ import (
 	"third-party-review/internal/config"
 	"third-party-review/internal/dto"
 	"third-party-review/internal/model"
-	"third-party-review/internal/service"
 )
 
-// Anthropic talks to the Messages API. It exists to prove the AIReviewer
+// anthropic talks to the Messages API. It exists to prove the AIReviewer
 // abstraction holds across genuinely different wire shapes: the system prompt
 // is a top-level field rather than a message, max_tokens is mandatory, content
 // comes back as a list of blocks, and auth uses x-api-key rather than a bearer
 // token. Prompt construction is shared with every other provider.
-type Anthropic struct {
+type anthropic struct {
 	cfg  config.AI
 	http *http.Client
 	log  *slog.Logger
 }
 
 // NewAnthropic constructs the client.
-func NewAnthropic(cfg config.AI, log *slog.Logger) *Anthropic {
-	return &Anthropic{
+func NewAnthropic(cfg config.AI, log *slog.Logger) AIReviewer {
+	return &anthropic{
 		cfg:  cfg,
 		http: &http.Client{Timeout: cfg.Timeout},
 		log:  log,
@@ -38,9 +37,9 @@ func NewAnthropic(cfg config.AI, log *slog.Logger) *Anthropic {
 }
 
 // Name identifies the provider on persisted results.
-func (c *Anthropic) Name() string { return "anthropic" }
+func (c *anthropic) Name() string { return "anthropic" }
 
-func (c *Anthropic) endpoint() string {
+func (c *anthropic) endpoint() string {
 	base := strings.TrimRight(c.cfg.BaseURL, "/")
 	if strings.HasSuffix(base, "/messages") {
 		return base
@@ -73,7 +72,7 @@ type anthropicResponse struct {
 	} `json:"error"`
 }
 
-func (c *Anthropic) complete(ctx context.Context, system, user string) (string, error) {
+func (c *anthropic) complete(ctx context.Context, system, user string) (string, error) {
 	maxTokens := c.cfg.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 4096
@@ -108,7 +107,7 @@ func (c *Anthropic) complete(ctx context.Context, system, user string) (string, 
 	return "", fmt.Errorf("ai: request failed after %d attempts: %w", c.cfg.MaxRetries+1, lastErr)
 }
 
-func (c *Anthropic) do(ctx context.Context, body anthropicRequest) (string, error) {
+func (c *anthropic) do(ctx context.Context, body anthropicRequest) (string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("ai: encode request: %w", err)
@@ -160,7 +159,7 @@ func (c *Anthropic) do(ctx context.Context, body anthropicRequest) (string, erro
 }
 
 // ReviewAnswer evaluates a single answer.
-func (c *Anthropic) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
+func (c *anthropic) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
 	text, err := c.complete(ctx, systemPrompt, BuildSingle(req))
 	if err != nil {
 		return model.ReviewResult{}, err
@@ -169,7 +168,7 @@ func (c *Anthropic) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (mo
 }
 
 // ReviewBatch evaluates several answers in one call.
-func (c *Anthropic) ReviewBatch(ctx context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
+func (c *anthropic) ReviewBatch(ctx context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
 	user := BuildBatch(req)
 	text, err := c.complete(ctx, systemPrompt, user)
 	if err != nil {
@@ -190,12 +189,10 @@ func (c *Anthropic) ReviewBatch(ctx context.Context, req dto.BatchReviewRequest)
 }
 
 // Summarize writes the assessment-level narrative.
-func (c *Anthropic) Summarize(ctx context.Context, req dto.SummaryRequest) (string, error) {
+func (c *anthropic) Summarize(ctx context.Context, req dto.SummaryRequest) (string, error) {
 	text, err := c.complete(ctx, summarySystemPrompt, BuildSummary(req))
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(stripFences(text)), nil
 }
-
-var _ service.AIReviewer = (*Anthropic)(nil)

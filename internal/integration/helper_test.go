@@ -17,7 +17,7 @@ import (
 	"third-party-review/internal/config"
 	"third-party-review/internal/helper"
 	"third-party-review/internal/repository"
-	"third-party-review/internal/service"
+	"third-party-review/internal/service/aiclient"
 	"third-party-review/internal/service/assessment"
 	"third-party-review/internal/service/auth"
 	"third-party-review/internal/service/parser"
@@ -37,7 +37,7 @@ type testEnv struct {
 }
 
 // mockReviewerHolder lets a test swap reviewer behaviour between runs.
-type mockReviewerHolder struct{ service.AIReviewer }
+type mockReviewerHolder struct{ aiclient.AIReviewer }
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()

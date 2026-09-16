@@ -15,7 +15,6 @@ import (
 	"third-party-review/internal/dto"
 	"third-party-review/internal/helper"
 	"third-party-review/internal/model"
-	"third-party-review/internal/service"
 
 	"github.com/google/uuid"
 )
@@ -29,7 +28,7 @@ import (
 // Structured output is requested but never relied on: what a proxied backend
 // does with response_format varies, so the response is always mined for JSON
 // (see ExtractJSON) and retried with a corrective message if that fails.
-type OpenAICompat struct {
+type openAICompat struct {
 	cfg    config.AI
 	http   *http.Client
 	log    *slog.Logger
@@ -38,8 +37,8 @@ type OpenAICompat struct {
 }
 
 // NewOpenAICompat constructs the client.
-func NewOpenAICompat(cfg config.AI, log *slog.Logger) *OpenAICompat {
-	return &OpenAICompat{
+func NewOpenAICompat(cfg config.AI, log *slog.Logger) AIReviewer {
+	return &openAICompat{
 		cfg:    cfg,
 		http:   &http.Client{Timeout: cfg.Timeout},
 		log:    log,
@@ -49,9 +48,9 @@ func NewOpenAICompat(cfg config.AI, log *slog.Logger) *OpenAICompat {
 }
 
 // Name identifies the provider on persisted results.
-func (c *OpenAICompat) Name() string { return c.name }
+func (c *openAICompat) Name() string { return c.name }
 
-func (c *OpenAICompat) endpoint() string {
+func (c *openAICompat) endpoint() string {
 	base := strings.TrimRight(c.cfg.BaseURL, "/")
 	path := c.cfg.ChatPath
 	if path == "" {
@@ -94,7 +93,7 @@ type oaResponse struct {
 
 // complete sends one chat completion and returns the assistant text. wantJSON
 // asks the backend for JSON mode where it supports it.
-func (c *OpenAICompat) complete(ctx context.Context, system, user string, wantJSON bool) (string, error) {
+func (c *openAICompat) complete(ctx context.Context, system, user string, wantJSON bool) (string, error) {
 	reqBody := oaRequest{
 		Model:       c.cfg.Model,
 		Temperature: c.cfg.Temperature,
@@ -138,7 +137,7 @@ func (c *OpenAICompat) complete(ctx context.Context, system, user string, wantJS
 	return "", fmt.Errorf("ai: request failed after %d attempts: %w", c.cfg.MaxRetries+1, lastErr)
 }
 
-func (c *OpenAICompat) do(ctx context.Context, body oaRequest) (string, error) {
+func (c *openAICompat) do(ctx context.Context, body oaRequest) (string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("ai: encode request: %w", err)
@@ -185,7 +184,7 @@ func (c *OpenAICompat) do(ctx context.Context, body oaRequest) (string, error) {
 }
 
 // ReviewAnswer evaluates a single answer.
-func (c *OpenAICompat) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
+func (c *openAICompat) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) (model.ReviewResult, error) {
 	text, err := c.complete(ctx, systemPrompt, BuildSingle(req), true)
 	if err != nil {
 		return model.ReviewResult{}, err
@@ -194,7 +193,7 @@ func (c *OpenAICompat) ReviewAnswer(ctx context.Context, req dto.ReviewRequest) 
 }
 
 // ReviewBatch evaluates several answers in one call.
-func (c *OpenAICompat) ReviewBatch(ctx context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
+func (c *openAICompat) ReviewBatch(ctx context.Context, req dto.BatchReviewRequest) (dto.BatchReviewResponse, error) {
 	user := BuildBatch(req)
 	text, err := c.complete(ctx, systemPrompt, user, true)
 	if err != nil {
@@ -218,15 +217,13 @@ func (c *OpenAICompat) ReviewBatch(ctx context.Context, req dto.BatchReviewReque
 }
 
 // Summarize writes the assessment-level narrative.
-func (c *OpenAICompat) Summarize(ctx context.Context, req dto.SummaryRequest) (string, error) {
+func (c *openAICompat) Summarize(ctx context.Context, req dto.SummaryRequest) (string, error) {
 	text, err := c.complete(ctx, summarySystemPrompt, BuildSummary(req), false)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(stripFences(text)), nil
 }
-
-var _ service.AIReviewer = (*OpenAICompat)(nil)
 
 const summarySystemPrompt = `You are an experienced third-party security assessor writing the executive summary of a completed vendor assessment for an internal risk file. You write plainly and specifically, never inflate or soften findings, and never introduce facts you were not given.`
 

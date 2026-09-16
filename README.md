@@ -108,9 +108,9 @@ the next section.
 
 ## Configuring the AI provider
 
-The reviewer is reached through one interface (`domain.AIReviewer`) with three
-implementations. `AI_PROVIDER` selects one; nothing above the client layer
-knows which is active.
+The reviewer is reached through one interface (`aiclient.AIReviewer`) with
+three implementations. `AI_PROVIDER` selects one; nothing above the client
+layer knows which is active.
 
 ### Open WebUI serving Qwen (the default deployment)
 
@@ -332,7 +332,8 @@ touching the layers around it:
 | Package | Contracts |
 |---|---|
 | `internal/repository` | one interface per model — `VendorRepository`, `AssessmentRepository`, `UploadRepository`, `QuestionRepository`, `ReviewResultRepository`, `AssessmentSummaryRepository`, `RubricRepository`, `AssessmentRubricRepository`, `ReviewJobRepository`, `UserRepository`, `RecoveryCodeRepository`, `SessionRepository` — plus `TxManager` |
-| `internal/service` | `VendorService`, `IngestService`, `AssessmentService`, `SignOffService`, `RubricService`, `ReviewService`, `AuthService`, `AIReviewer`, `QuestionnaireParser` |
+| `internal/service` | `VendorService`, `IngestService`, `AssessmentService`, `SignOffService`, `RubricService`, `ReviewService`, `AuthService`, `QuestionnaireParser` |
+| `internal/service/aiclient` | `AIReviewer` — declared alongside its own implementations (`anthropic`, `openAICompat`, `mock`), the same way each repository file declares its interface next to its struct |
 | `delivery/http/handler/routes.go` | `Routes` — the delivery contract the router depends on instead of the concrete handler set |
 
 The compile-time assertions proving each implementation satisfies its contract

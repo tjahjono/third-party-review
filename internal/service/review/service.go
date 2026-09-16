@@ -13,7 +13,7 @@ import (
 	"third-party-review/internal/helper"
 	"third-party-review/internal/model"
 	"third-party-review/internal/repository"
-	"third-party-review/internal/service"
+	"third-party-review/internal/service/aiclient"
 
 	"github.com/google/uuid"
 )
@@ -35,7 +35,7 @@ type Service struct {
 	summaries   repository.AssessmentSummaryRepository
 	rubrics     repository.AssessmentRubricRepository
 	jobs        repository.ReviewJobRepository
-	reviewer    service.AIReviewer
+	reviewer    aiclient.AIReviewer
 	cfg         config.AI
 	log         *slog.Logger
 }
