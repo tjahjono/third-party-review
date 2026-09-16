@@ -28,6 +28,7 @@ type Routes interface {
 	FirstRunSetup(w http.ResponseWriter, r *http.Request)
 	AccountPage(w http.ResponseWriter, r *http.Request)
 	ChangePassword(w http.ResponseWriter, r *http.Request)
+	UpdateLanguage(w http.ResponseWriter, r *http.Request)
 	BeginMFA(w http.ResponseWriter, r *http.Request)
 	ConfirmMFA(w http.ResponseWriter, r *http.Request)
 	DisableMFA(w http.ResponseWriter, r *http.Request)
@@ -64,6 +65,7 @@ type Routes interface {
 	CloseAssessment(w http.ResponseWriter, r *http.Request)
 	ReopenAssessment(w http.ResponseWriter, r *http.Request)
 	ExportCSV(w http.ResponseWriter, r *http.Request)
+	ExportXLSX(w http.ResponseWriter, r *http.Request)
 
 	// Rubric
 	RubricPanel(w http.ResponseWriter, r *http.Request)

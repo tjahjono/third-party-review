@@ -29,6 +29,10 @@ type ReviewJob struct {
 	Provider string     `json:"provider"`
 	Model    string     `json:"model"`
 	RubricID *uuid.UUID `json:"rubric_id,omitempty"`
+	// Language is snapshotted from the requesting user's account preference at
+	// Enqueue time, because the worker always re-reads the job fresh from the
+	// database (see Run) rather than trusting anything held in memory.
+	Language Language `json:"language"`
 
 	Error string `json:"error,omitempty"`
 

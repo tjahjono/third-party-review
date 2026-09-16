@@ -78,6 +78,32 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, current,
 	return nil
 }
 
+// UpdateLanguage sets the language the AI writes future review drafts and
+// summaries in for this user. It takes effect the next time they start a
+// review - a run already in progress keeps the language it was queued with.
+func (s *Service) UpdateLanguage(ctx context.Context, userID uuid.UUID, lang model.Language) error {
+	valid := false
+	for _, l := range model.AllLanguages {
+		if l == lang {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return helper.ValidationError{Field: "language", Message: "Choose one of the supported languages."}
+	}
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	user.Language = lang
+	if err := s.users.Update(ctx, user); err != nil {
+		return err
+	}
+	s.log.Info("AI response language changed", "username", user.Username, "language", lang)
+	return nil
+}
+
 // UserCount reports how many accounts exist, used to decide whether the
 // first-run setup screen should be shown.
 func (s *Service) UserCount(ctx context.Context) (int, error) {

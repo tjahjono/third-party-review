@@ -76,6 +76,7 @@ func NewRouter(d Deps) http.Handler {
 		r.Route("/account", func(r chi.Router) {
 			r.Get("/", h.AccountPage)
 			r.Post("/password", h.ChangePassword)
+			r.Post("/language", h.UpdateLanguage)
 			r.Post("/mfa/begin", h.BeginMFA)
 			r.Post("/mfa/confirm", h.ConfirmMFA)
 			r.Post("/mfa/disable", h.DisableMFA)
@@ -97,6 +98,7 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/", h.AssessmentDetail)
 				r.Delete("/", h.DeleteAssessment)
 				r.Get("/export.csv", h.ExportCSV)
+				r.Get("/export.xlsx", h.ExportXLSX)
 
 				// Ingestion
 				r.Get("/mapping", h.MappingPage)

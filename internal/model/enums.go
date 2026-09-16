@@ -102,6 +102,23 @@ const (
 	JobCancelled JobStatus = "cancelled"
 )
 
+// Language is the language the AI writes assessor feedback, rationale and the
+// executive summary narrative in. English is the default; a user changes
+// their own preference on the account page, and every review job snapshots it
+// at enqueue time (see ReviewJob.Language) so a run always uses the language
+// its owner asked for, even if their preference changes before it completes.
+type Language string
+
+const (
+	LanguageEnglish    Language = "en"
+	LanguageIndonesian Language = "id"
+)
+
+// AllLanguages is every language the account page offers. Deliberately a
+// short fixed list rather than free text, so every value is one the prompt
+// layer and the UI both know how to label.
+var AllLanguages = []Language{LanguageEnglish, LanguageIndonesian}
+
 // QuestionField identifies one logical column of the TPSA questionnaire
 // template. The template is a strong prior, not a guarantee, so every field
 // except FieldQuestion is optional and any column may be left unmapped.

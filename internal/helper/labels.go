@@ -74,6 +74,19 @@ func CompletenessLabel(c model.Completeness) string {
 	return "Unknown"
 }
 
+// LanguageLabel is the human-readable name of an AI response language, used
+// both for the account-page dropdown and as the name the prompt layer asks
+// the model to write in.
+func LanguageLabel(l model.Language) string {
+	switch l {
+	case model.LanguageIndonesian:
+		return "Indonesian"
+	case model.LanguageEnglish:
+		return "English"
+	}
+	return "English"
+}
+
 // FlagKindLabel is the human-readable reason an answer was flagged.
 func FlagKindLabel(f model.FlagKind) string {
 	switch f {

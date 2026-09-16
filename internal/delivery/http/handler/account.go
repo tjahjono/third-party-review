@@ -62,6 +62,38 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	h.renderAccount(w, r, http.StatusOK, accountView{User: user, Flash: "Your password has been changed."})
 }
 
+// UpdateLanguage sets the language the AI writes future review drafts and
+// summaries in for the signed-in user.
+func (h *Handler) UpdateLanguage(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		h.fail(w, r, helper.ValidationError{Field: "form", Message: "The form could not be read."})
+		return
+	}
+	lang := model.Language(r.FormValue("language"))
+	if err := h.auth.UpdateLanguage(r.Context(), user.ID, lang); err != nil {
+		var ve helper.ValidationError
+		if errors.As(err, &ve) {
+			h.renderAccount(w, r, http.StatusUnprocessableEntity, accountView{User: user, Error: ve.Message})
+			return
+		}
+		h.fail(w, r, err)
+		return
+	}
+	refreshed, err := h.auth.GetUser(r.Context(), user.ID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.renderAccount(w, r, http.StatusOK, accountView{
+		User:  refreshed,
+		Flash: "AI responses will now be drafted in " + helper.LanguageLabel(refreshed.Language) + ".",
+	})
+}
+
 // BeginMFA starts authenticator enrolment and shows the QR code.
 func (h *Handler) BeginMFA(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.RequireUser(w, r)

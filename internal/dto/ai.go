@@ -45,6 +45,10 @@ type ReviewRequest struct {
 	// PeerAnswers gives brief context from other answers in the assessment so
 	// a single-question follow-up can still spot contradictions.
 	PeerAnswers []PeerAnswer `json:"peer_answers,omitempty"`
+	// Language is the reviewer's preferred language for the drafted prose.
+	// Empty (or "en") means English, the prompt's native language, and adds no
+	// extra instruction.
+	Language model.Language `json:"language,omitempty"`
 }
 
 // BatchReviewRequest asks for evaluation of several answers in one call.
@@ -54,6 +58,8 @@ type BatchReviewRequest struct {
 	Questions       []QuestionContext `json:"questions"`
 	RubricExcerpt   string            `json:"rubric_excerpt,omitempty"`
 	PeerAnswers     []PeerAnswer      `json:"peer_answers,omitempty"`
+	// Language is the reviewer's preferred language for the drafted prose.
+	Language model.Language `json:"language,omitempty"`
 }
 
 // BatchReviewResponse carries per-question results keyed by QuestionID plus
@@ -89,4 +95,6 @@ type SummaryRequest struct {
 	// narrative request stays inside the model's context window.
 	TopFindings []SummaryFinding `json:"top_findings"`
 	BatchNotes  []string         `json:"batch_notes,omitempty"`
+	// Language is the reviewer's preferred language for the narrative.
+	Language model.Language `json:"language,omitempty"`
 }

@@ -50,6 +50,11 @@ func templateFuncs() template.FuncMap {
 		"completenessLabel": helper.CompletenessLabel,
 		"flagLabel":         helper.FlagKindLabel,
 		"jobStatusLabel":    helper.JobStatusLabel,
+		"languageLabel":     helper.LanguageLabel,
+
+		// allLanguages gives the account page a fixed display order for the
+		// language dropdown, same reasoning as assessmentStatuses above.
+		"allLanguages": func() []model.Language { return model.AllLanguages },
 
 		"resultBand":  helper.ResultBand,
 		"domainBand":  helper.DomainBand,

@@ -75,6 +75,7 @@ func BuildSingle(req dto.ReviewRequest) string {
 	b.WriteString("\nReturn a single JSON object and nothing else, in this shape:\n")
 	b.WriteString(reviewSchema)
 	b.WriteString("\n")
+	b.WriteString(languageInstruction(req.Language))
 	return b.String()
 }
 
@@ -104,6 +105,7 @@ Each element of "results" must be:
 `)
 	b.WriteString(reviewSchema)
 	b.WriteString("\n\nInclude exactly one result for every item, echoing its question_id. Do not omit an item because it was unanswered - an unanswered item is a finding.\n")
+	b.WriteString(languageInstruction(req.Language))
 	return b.String()
 }
 
@@ -151,7 +153,21 @@ Per-domain residual risk:
 	b.WriteString(`
 Write 3 to 5 short paragraphs of plain prose. Open with the overall risk position, then the domains that drive it, then what must be resolved before this vendor is approved. Use the figures given above exactly as stated - do not recompute or contradict them. No bullet points, no headings, no markdown. Return prose only, not JSON.
 `)
+	b.WriteString(languageInstruction(req.Language))
 	return b.String()
+}
+
+// languageInstruction appends a translation instruction when the reviewer
+// asked for anything other than English, the prompts' native language.
+// Structure (JSON keys, enum values) must stay exactly as documented above -
+// only the natural-language prose changes - so a non-English run still
+// parses and aggregates exactly like an English one.
+func languageInstruction(lang model.Language) string {
+	if lang == "" || lang == model.LanguageEnglish {
+		return ""
+	}
+	return fmt.Sprintf("\nWrite every piece of natural-language prose - assessor_feedback, rationale, each flag's detail, and any free-text summary - in %s. Every JSON key name and every enum value (risk_score, completeness, flags[].kind, and so on) must stay exactly as specified above, in English; translate only the prose content.\n",
+		helper.LanguageLabel(lang))
 }
 
 func writeQuestion(b *strings.Builder, q dto.QuestionContext) {

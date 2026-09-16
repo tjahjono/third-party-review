@@ -27,6 +27,11 @@ type User struct {
 	// code rows remain for this user.
 	MFARecoveryHas bool `json:"mfa_recovery_available"`
 
+	// Language is the user's preferred language for AI-drafted assessor
+	// feedback, rationale and executive summaries. Every review job that user
+	// starts snapshots this onto the job row (see ReviewJob.Language).
+	Language Language `json:"language"`
+
 	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`

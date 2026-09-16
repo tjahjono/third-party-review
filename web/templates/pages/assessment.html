@@ -18,6 +18,7 @@
     {{ end }}
     {{ if $d.Summary }}
       <a class="btn btn-outline-secondary btn-sm" href="/assessments/{{ $a.ID }}/export.csv">Export CSV</a>
+      <a class="btn btn-outline-secondary btn-sm" href="/assessments/{{ $a.ID }}/export.xlsx">Export Excel</a>
     {{ end }}
     <button class="btn btn-outline-danger btn-sm"
             hx-delete="/assessments/{{ $a.ID }}"

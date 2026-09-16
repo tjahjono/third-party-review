@@ -176,7 +176,11 @@ func (h *Handler) StartReview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	job, err := h.reviews.Enqueue(r.Context(), id, scope, questionIDs)
+	language := model.LanguageEnglish
+	if u := middleware.UserFrom(r.Context()); u != nil && u.Language != "" {
+		language = u.Language
+	}
+	job, err := h.reviews.Enqueue(r.Context(), id, scope, questionIDs, language)
 	if err != nil {
 		h.fail(w, r, err)
 		return

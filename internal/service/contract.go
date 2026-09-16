@@ -49,6 +49,11 @@ type SignOffService interface {
 	CloseAssessment(ctx context.Context, assessmentID uuid.UUID) error
 	ReopenAssessment(ctx context.Context, assessmentID uuid.UUID) error
 	ExportCSV(ctx context.Context, assessmentID uuid.UUID, w io.Writer) error
+	// ExportXLSX writes the reviewed assessment back out in the shape of the
+	// originally-uploaded template: the same 7 columns, with domain section
+	// dividers reconstructed and the Assessor Feedback column filled from the
+	// finalized (or, if not yet signed off, clearly marked draft) feedback.
+	ExportXLSX(ctx context.Context, assessmentID uuid.UUID, w io.Writer) error
 }
 
 // RubricService manages the optional policy an assessment is judged against.
@@ -78,7 +83,9 @@ type AssessmentFacade interface {
 // half of the contract and are paired: every caller of Run must call Finish,
 // because a panic inside Run has to be caught before the outcome is recorded.
 type ReviewService interface {
-	Enqueue(ctx context.Context, assessmentID uuid.UUID, scope model.ReviewScope, questionIDs []uuid.UUID) (*model.ReviewJob, error)
+	// language is the requesting user's AI-response language preference,
+	// snapshotted onto the created job (see model.ReviewJob.Language).
+	Enqueue(ctx context.Context, assessmentID uuid.UUID, scope model.ReviewScope, questionIDs []uuid.UUID, language model.Language) (*model.ReviewJob, error)
 	Status(ctx context.Context, assessmentID uuid.UUID) (*model.ReviewJob, error)
 	Run(ctx context.Context, job *model.ReviewJob) error
 	Finish(ctx context.Context, job *model.ReviewJob, runErr error) error
@@ -101,6 +108,7 @@ type AuthService interface {
 
 	CreateUser(ctx context.Context, username, displayName, password string) (*model.User, error)
 	ChangePassword(ctx context.Context, userID uuid.UUID, current, next string) error
+	UpdateLanguage(ctx context.Context, userID uuid.UUID, lang model.Language) error
 	GetUser(ctx context.Context, id uuid.UUID) (*model.User, error)
 	UserCount(ctx context.Context) (int, error)
 	Bootstrap(ctx context.Context, username, password string) error

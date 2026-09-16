@@ -42,14 +42,14 @@ func NewReviewJobRepository(db helper.ConnProvider) ReviewJobRepository {
 
 const jobColumns = `
 	id, assessment_id, status, scope, total_questions, done_questions, failed_questions,
-	stage, provider, model, rubric_id, error, created_at, started_at,
+	stage, provider, model, rubric_id, language, error, created_at, started_at,
 	finished_at, heartbeat_at`
 
 func scanJob(s interface{ Scan(...any) error }) (*model.ReviewJob, error) {
 	var j model.ReviewJob
 	if err := s.Scan(&j.ID, &j.AssessmentID, &j.Status, &j.Scope, &j.TotalQuestions,
 		&j.DoneQuestions, &j.FailedQuestions, &j.Stage, &j.Provider, &j.Model,
-		&j.RubricID, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt,
+		&j.RubricID, &j.Language, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt,
 		&j.HeartbeatAt); err != nil {
 		return nil, helper.MapErr(err)
 	}
@@ -58,8 +58,8 @@ func scanJob(s interface{ Scan(...any) error }) (*model.ReviewJob, error) {
 
 func (r *reviewJobRepository) Create(ctx context.Context, j *model.ReviewJob) error {
 	const q = `
-		INSERT INTO review_jobs (assessment_id, status, scope, total_questions, stage, provider, model, rubric_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO review_jobs (assessment_id, status, scope, total_questions, stage, provider, model, rubric_id, language)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, created_at`
 	if j.Status == "" {
 		j.Status = model.JobQueued
@@ -67,8 +67,11 @@ func (r *reviewJobRepository) Create(ctx context.Context, j *model.ReviewJob) er
 	if j.Scope == "" {
 		j.Scope = model.ScopeAll
 	}
+	if j.Language == "" {
+		j.Language = model.LanguageEnglish
+	}
 	err := r.db.Querier(ctx).QueryRow(ctx, q, j.AssessmentID, string(j.Status), string(j.Scope),
-		j.TotalQuestions, j.Stage, j.Provider, j.Model, j.RubricID).
+		j.TotalQuestions, j.Stage, j.Provider, j.Model, j.RubricID, string(j.Language)).
 		Scan(&j.ID, &j.CreatedAt)
 	return helper.MapErr(err)
 }
@@ -213,7 +216,7 @@ func (r *reviewJobRepository) QuestionIDsForJob(ctx context.Context, jobID uuid.
 func (r *reviewJobRepository) ListActive(ctx context.Context) ([]dto.ActiveReview, error) {
 	const q = `
 		SELECT j.id, j.assessment_id, j.status, j.scope, j.total_questions, j.done_questions,
-		       j.failed_questions, j.stage, j.provider, j.model, j.rubric_id, j.error,
+		       j.failed_questions, j.stage, j.provider, j.model, j.rubric_id, j.language, j.error,
 		       j.created_at, j.started_at, j.finished_at, j.heartbeat_at,
 		       a.title, v.name
 		  FROM review_jobs j
@@ -235,7 +238,7 @@ func (r *reviewJobRepository) ListActive(ctx context.Context) ([]dto.ActiveRevie
 		)
 		if err := rows.Scan(&j.ID, &j.AssessmentID, &j.Status, &j.Scope, &j.TotalQuestions,
 			&j.DoneQuestions, &j.FailedQuestions, &j.Stage, &j.Provider, &j.Model,
-			&j.RubricID, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt,
+			&j.RubricID, &j.Language, &j.Error, &j.CreatedAt, &j.StartedAt, &j.FinishedAt,
 			&j.HeartbeatAt, &title, &vendorName); err != nil {
 			return nil, helper.MapErr(err)
 		}

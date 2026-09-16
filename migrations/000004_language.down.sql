@@ -1,0 +1,2 @@
+ALTER TABLE review_jobs DROP COLUMN IF EXISTS language;
+ALTER TABLE users DROP COLUMN IF EXISTS language;

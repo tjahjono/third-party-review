@@ -260,3 +260,35 @@ func (h *Handler) ExportCSV(w http.ResponseWriter, r *http.Request) {
 		h.log.Warn("export download was interrupted", "assessment_id", id, "error", err)
 	}
 }
+
+// ExportXLSX streams the reviewed assessment as an Excel download, formatted
+// like the originally-uploaded questionnaire.
+func (h *Handler) ExportXLSX(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "assessmentID")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	a, err := h.assessments.GetAssessment(r.Context(), id)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	// Built into a buffer first, same reasoning as ExportCSV above: a failure
+	// part-way through must not hand the user a truncated file with a 200
+	// header already sent.
+	var buf bytes.Buffer
+	if err := h.assessments.ExportXLSX(r.Context(), id, &buf); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="`+assessment.ExportXLSXFilename(a)+`"`)
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		h.log.Warn("export download was interrupted", "assessment_id", id, "error", err)
+	}
+}

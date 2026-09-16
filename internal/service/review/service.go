@@ -78,7 +78,7 @@ func MustNew(deps Deps) *Service {
 // review_job_questions here, not carried in memory - the worker always
 // re-reads the job fresh from the database (see Run), so anything the run
 // needs to know has to be in the row or a table keyed off it.
-func (s *Service) Enqueue(ctx context.Context, assessmentID uuid.UUID, scope model.ReviewScope, questionIDs []uuid.UUID) (*model.ReviewJob, error) {
+func (s *Service) Enqueue(ctx context.Context, assessmentID uuid.UUID, scope model.ReviewScope, questionIDs []uuid.UUID, language model.Language) (*model.ReviewJob, error) {
 	a, err := s.assessments.GetByID(ctx, assessmentID)
 	if err != nil {
 		return nil, err
@@ -162,6 +162,9 @@ func (s *Service) Enqueue(ctx context.Context, assessmentID uuid.UUID, scope mod
 		}
 	}
 
+	if language == "" {
+		language = model.LanguageEnglish
+	}
 	job := &model.ReviewJob{
 		AssessmentID:   assessmentID,
 		Status:         model.JobQueued,
@@ -170,6 +173,7 @@ func (s *Service) Enqueue(ctx context.Context, assessmentID uuid.UUID, scope mod
 		Stage:          "Queued",
 		Provider:       s.reviewer.Name(),
 		Model:          s.cfg.Model,
+		Language:       language,
 	}
 	if rubric, err := s.rubrics.GetRubric(ctx, assessmentID); err == nil {
 		job.RubricID = &rubric.ID
@@ -313,7 +317,7 @@ func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 			default:
 			}
 
-			batchResults, batchNotes, batchFailed := s.reviewChunk(ctx, assessment, chunk, rubricExcerpt, peers, job.ID)
+			batchResults, batchNotes, batchFailed := s.reviewChunk(ctx, assessment, chunk, rubricExcerpt, peers, job.ID, job.Language)
 			notes = append(notes, batchNotes...)
 			done += len(batchResults)
 			failed += batchFailed
@@ -335,7 +339,7 @@ func (s *Service) Run(ctx context.Context, job *model.ReviewJob) error {
 		return fmt.Errorf("the AI provider returned no usable results for any of the %d questions", len(questions))
 	}
 
-	if err := s.buildSummary(ctx, assessment, job.ID, notes); err != nil {
+	if err := s.buildSummary(ctx, assessment, job.ID, notes, job.Language); err != nil {
 		// A summary failure must not discard per-question work that succeeded.
 		s.log.Error("summary generation failed; per-question results were kept",
 			"assessment_id", assessmentID, "error", err)
@@ -385,6 +389,7 @@ func (s *Service) reviewChunk(
 	rubric string,
 	peers []dto.PeerAnswer,
 	runID uuid.UUID,
+	language model.Language,
 ) ([]*model.ReviewResult, []string, int) {
 	contexts := make([]dto.QuestionContext, 0, len(chunk))
 	for _, q := range chunk {
@@ -403,6 +408,7 @@ func (s *Service) reviewChunk(
 		Questions:       contexts,
 		RubricExcerpt:   rubric,
 		PeerAnswers:     excludeSelf(peers, chunk),
+		Language:        language,
 	})
 	if err != nil {
 		s.log.Warn("batch review failed, falling back to per-question calls",
@@ -420,6 +426,7 @@ func (s *Service) reviewChunk(
 				Question:      toContext(q),
 				RubricExcerpt: rubric,
 				PeerAnswers:   excludeSelf(peers, chunk),
+				Language:      language,
 			})
 			if sErr == nil {
 				r, ok = single, true
@@ -455,7 +462,7 @@ func (s *Service) reviewChunk(
 // some questions, and scoping here would silently drop every other question
 // from the aggregate. runID is still recorded on the summary, to say which
 // run last touched it.
-func (s *Service) buildSummary(ctx context.Context, assessment *model.Assessment, runID uuid.UUID, notes []string) error {
+func (s *Service) buildSummary(ctx context.Context, assessment *model.Assessment, runID uuid.UUID, notes []string, language model.Language) error {
 	questions, err := s.questions.ListForReview(ctx, assessment.ID)
 	if err != nil {
 		return err
@@ -479,6 +486,7 @@ func (s *Service) buildSummary(ctx context.Context, assessment *model.Assessment
 		DomainScores:    summary.DomainScores,
 		TopFindings:     TopFindings(questions, results, 12),
 		BatchNotes:      notes,
+		Language:        language,
 	})
 	if err != nil {
 		// Keep the computed figures even when the prose fails; they are the
