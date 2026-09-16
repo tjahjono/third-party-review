@@ -13,6 +13,7 @@ import (
 
 	"third-party-review/internal/config"
 	"third-party-review/internal/dto"
+	"third-party-review/internal/helper"
 	"third-party-review/internal/model"
 	"third-party-review/internal/service"
 
@@ -232,10 +233,10 @@ const summarySystemPrompt = `You are an experienced third-party security assesso
 // parseSingle decodes a single-question response.
 func parseSingle(text string, questionID uuid.UUID, provider, modelName string) (model.ReviewResult, error) {
 	var raw rawResult
-	if err := UnmarshalLoose(text, &raw); err != nil {
+	if err := helper.UnmarshalLoose(text, &raw); err != nil {
 		// Some models answer a single-item prompt with the batch shape anyway.
 		var batch rawBatch
-		if err2 := UnmarshalLoose(text, &batch); err2 == nil && len(batch.Results) > 0 {
+		if err2 := helper.UnmarshalLoose(text, &batch); err2 == nil && len(batch.Results) > 0 {
 			raw = batch.Results[0]
 		} else {
 			return model.ReviewResult{}, fmt.Errorf("ai: %w", err)
@@ -254,7 +255,7 @@ func parseBatch(text, provider, modelName string) (dto.BatchReviewResponse, erro
 	out := dto.BatchReviewResponse{Results: map[uuid.UUID]model.ReviewResult{}, Raw: text}
 
 	var batch rawBatch
-	if err := UnmarshalLoose(text, &batch); err == nil && len(batch.Results) > 0 {
+	if err := helper.UnmarshalLoose(text, &batch); err == nil && len(batch.Results) > 0 {
 		for _, r := range batch.Results {
 			if r.QuestionID == uuid.Nil {
 				continue
@@ -268,7 +269,7 @@ func parseBatch(text, provider, modelName string) (dto.BatchReviewResponse, erro
 	}
 
 	var arr []rawResult
-	if err := UnmarshalLoose(text, &arr); err == nil && len(arr) > 0 {
+	if err := helper.UnmarshalLoose(text, &arr); err == nil && len(arr) > 0 {
 		for _, r := range arr {
 			if r.QuestionID == uuid.Nil {
 				continue
@@ -289,7 +290,7 @@ func stripFences(s string) string {
 	if !strings.HasPrefix(s, "```") {
 		return s
 	}
-	if inner, ok := fencedBlock(s); ok {
+	if inner, ok := helper.FencedBlock(s); ok {
 		return inner
 	}
 	return s

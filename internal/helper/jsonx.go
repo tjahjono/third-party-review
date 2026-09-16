@@ -1,4 +1,4 @@
-package aiclient
+package helper
 
 import (
 	"encoding/json"
@@ -32,7 +32,7 @@ func ExtractJSON(s string) (string, error) {
 	}
 
 	// A fenced block is the most common wrapper.
-	if inner, ok := fencedBlock(s); ok {
+	if inner, ok := FencedBlock(s); ok {
 		if v, err := scanJSON(inner); err == nil {
 			return v, nil
 		}
@@ -40,8 +40,8 @@ func ExtractJSON(s string) (string, error) {
 	return scanJSON(s)
 }
 
-// fencedBlock returns the contents of the first ``` fence, if any.
-func fencedBlock(s string) (string, bool) {
+// FencedBlock returns the contents of the first ``` fence, if any.
+func FencedBlock(s string) (string, bool) {
 	start := strings.Index(s, "```")
 	if start < 0 {
 		return "", false
