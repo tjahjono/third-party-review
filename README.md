@@ -38,12 +38,17 @@ needs Go 1.25.4 and a Postgres you point it at.
 
 ### With Docker (the intended path)
 
+Credentials (SESSION_SECRET, the Postgres password, AI_API_KEY,
+BOOTSTRAP_PASSWORD) are supplied as Docker secrets, not plain environment
+variables — see `secrets/README.md` for the full explanation. Everything
+else lives in `.env`, same as before.
+
 Run everything **from the repository root**:
 
 ```bash
 make env                      # creates .env from .env.example
-# edit .env: set SESSION_SECRET to a random value
-#   openssl rand -hex 32
+make secrets                  # creates secrets/*.txt (generates SESSION_SECRET;
+                               #   edit the rest - postgres/AI/bootstrap - before deploying)
 make up                       # builds and starts app + postgres
 make logs                     # follow the app log
 ```
@@ -54,7 +59,12 @@ create your account.
 Without `make`, the equivalent is:
 
 ```bash
-cp .env.example .env          # then set SESSION_SECRET
+cp .env.example .env
+mkdir -p secrets
+openssl rand -hex 32 > secrets/session_secret.txt
+echo -n 'a-strong-postgres-password'  > secrets/postgres_password.txt
+echo -n ''                            > secrets/ai_api_key.txt   # or your key
+echo -n 'a-strong-bootstrap-password' > secrets/bootstrap_password.txt
 docker compose -f docker/docker-compose.yml --env-file .env up -d --build
 ```
 
@@ -76,6 +86,44 @@ Useful targets: `make logs`, `make down` (stop, keep the data),
 `make reset` (stop and delete the database volume), `make psql`.
 `make help` lists them all.
 
+### With Docker Swarm (`docker stack deploy`)
+
+The same `docker/docker-compose.yml` deploys to a Swarm, with one difference:
+Swarm ignores the `build:` block, so build and tag the image yourself first.
+`make stack-deploy` does both steps:
+
+```bash
+make env                      # if you haven't already
+make secrets                  # if you haven't already
+docker swarm init              # skip if this host is already a swarm manager
+make stack-deploy              # builds+tags the image, then `docker stack deploy`
+```
+
+Or by hand:
+
+```bash
+docker build -f docker/Dockerfile -t tpsa-reviewer-app:latest .
+docker stack deploy -c docker/docker-compose.yml tpsa-reviewer
+```
+
+Run `docker stack deploy` **from the repository root**: unlike `docker
+compose`, it has no `--env-file` flag — it resolves a bare `.env` from the
+current directory on its own. The four secret files are read once at deploy
+time and turned into encrypted Swarm secret objects; editing a `secrets/*.txt`
+file afterwards does not change what's already running — see
+`secrets/README.md` for how to rotate one.
+
+Check on it with `docker stack services tpsa-reviewer` and
+`docker service logs -f tpsa-reviewer_app`. `make stack-rm` tears the stack
+down (the `postgres-data` volume is kept).
+
+This setup targets a single-node swarm, which is what an internal tool like
+this one almost always runs on. Multi-node needs more than credential
+handling — shared storage for the `postgres-data` volume, and the Postgres
+port publish in `docker-compose.yml` (localhost-only, for `psql` during
+development) reconsidered, since Swarm's routing mesh does not honour a
+host-IP-scoped port binding the same way across nodes.
+
 ### Without Docker
 
 Needs Go 1.25.4 (the version pinned in `go.mod`) and a reachable Postgres 13+
@@ -85,10 +133,7 @@ Needs Go 1.25.4 (the version pinned in `go.mod`) and a reachable Postgres 13+
 createdb tpsa
 export DATABASE_URL="postgres://you@localhost:5432/tpsa?sslmode=disable"
 export SESSION_SECRET="$(openssl rand -hex 32)"
-export AI_PROVIDER=openaicompat
-export AI_BASE_URL=https://openwebui.internal.example/api
-export AI_API_KEY=sk-...
-export AI_MODEL=qwen2.5:32b-instruct
+export AI_PROVIDER=mock
 make run        # or: go run ./cmd/server
 ```
 
@@ -96,13 +141,25 @@ make run        # or: go run ./cmd/server
 
 The first visit shows a setup screen. To create the account
 non-interactively instead — for a scripted deployment — set
-`BOOTSTRAP_USERNAME` and `BOOTSTRAP_PASSWORD` in `.env`. Both are ignored once
-any account exists, so a restart can never resurrect or reset an account.
+`BOOTSTRAP_USERNAME` in `.env` and `BOOTSTRAP_PASSWORD` (under Docker,
+`secrets/bootstrap_password.txt` — see `secrets/README.md`). Both are
+ignored once any account exists, so a restart can never resurrect or reset
+an account.
+
+### Trying it without an AI provider
+
+`AI_PROVIDER=mock` (the default in `.env.example`) runs the entire pipeline
+with a deterministic offline reviewer — no API key, no cost, no network. Upload
+a questionnaire, map it, run a review, sign off and export, all before you
+point it at a real model. Switch to your own provider when you are ready; see
+the next section.
+
+---
 
 ## Configuring the AI provider
 
 The reviewer is reached through one interface (`aiclient.AIReviewer`) with
-two implementations. `AI_PROVIDER` selects one; nothing above the client
+three implementations. `AI_PROVIDER` selects one; nothing above the client
 layer knows which is active.
 
 ### Open WebUI serving Qwen (the default deployment)
@@ -130,6 +187,14 @@ AI_BASE_URL=https://api.anthropic.com/v1
 AI_API_KEY=sk-ant-...
 AI_MODEL=claude-sonnet-4-20250514
 ```
+
+### Mock
+
+`AI_PROVIDER=mock` is a deterministic offline reviewer. It applies a few of the
+heuristics a real assessor would (blank answer → score 5 and a missing-answer
+flag; "industry standard firewalls are in place" → vague flag) so the entire
+pipeline can be exercised with no API key and no cost. It does not read for
+meaning and is not a substitute for a model.
 
 ### Notes on self-hosted backends
 
@@ -318,7 +383,7 @@ touching the layers around it:
 |---|---|
 | `internal/repository` | one interface per model — `VendorRepository`, `AssessmentRepository`, `UploadRepository`, `QuestionRepository`, `ReviewResultRepository`, `AssessmentSummaryRepository`, `RubricRepository`, `AssessmentRubricRepository`, `ReviewJobRepository`, `UserRepository`, `RecoveryCodeRepository`, `SessionRepository` — plus `TxManager` |
 | `internal/service` | `VendorService`, `IngestService`, `AssessmentService`, `SignOffService`, `RubricService`, `ReviewService`, `AuthService`, `QuestionnaireParser` |
-| `internal/service/aiclient` | `AIReviewer` — declared alongside its own implementations (`anthropic`, `openAICompat`), the same way each repository file declares its interface next to its struct |
+| `internal/service/aiclient` | `AIReviewer` — declared alongside its own implementations (`anthropic`, `openAICompat`, `mock`), the same way each repository file declares its interface next to its struct |
 | `delivery/http/handler/routes.go` | `Routes` — the delivery contract the router depends on instead of the concrete handler set |
 
 The compile-time assertions proving each implementation satisfies its contract
@@ -399,7 +464,7 @@ internal/
   service/
     parser            Excel/CSV reading, column mapping, domain detection
     assessment        vendors, assessments, ingestion
-    aiclient          AIReviewer interface + openaicompat / anthropic
+    aiclient          AIReviewer interface + openaicompat / anthropic / mock
     review            batching, scoring, aggregation, background worker
     auth              passwords, sessions, optional TOTP MFA
   delivery/http       chi router, handlers, middleware
@@ -468,7 +533,8 @@ make test-race
 The integration suite skips itself when `TEST_DATABASE_URL` is unset, so
 `go test ./...` passes on a machine with no database. It runs the real
 migrations and walks the whole pipeline — upload, preview, mapping, review,
-aggregation.
+aggregation — using the production mock reviewer, so it exercises exactly the
+code path a developer gets with `AI_PROVIDER=mock`.
 
 Beyond the happy path, the suite pins the behaviours that are expensive to get
 wrong:

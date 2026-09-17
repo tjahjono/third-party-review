@@ -2,7 +2,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -36,6 +38,13 @@ type App struct {
 }
 
 // DB holds PostgreSQL connection settings.
+//
+// DSN is what the pool actually connects with. It comes from DATABASE_URL
+// (or DATABASE_URL_FILE) when set - the escape hatch for a managed Postgres
+// that hands you a ready-made connection string - and otherwise is built
+// from the discrete POSTGRES_* parts, so the app and the official postgres
+// image can share a single Docker secret holding just the bare password
+// rather than needing a second secret with the whole URL baked in.
 type DB struct {
 	DSN             string
 	MaxConns        int32
@@ -75,21 +84,40 @@ const (
 // validates it. It returns a descriptive error naming the offending variable
 // rather than panicking, so startup failures are diagnosable from logs.
 func Load() (*Config, error) {
+	// errs collects every secret-file read failure so one bad mount is
+	// reported alongside any others in a single error, rather than the
+	// process dying on the first one and a redeploy uncovering the next.
+	var errs []error
+	secret := func(key, def string) string {
+		v, err := readSecretEnv(key, def)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return v
+	}
+
+	dsn := secret("DATABASE_URL", "")
+	if dsn == "" {
+		dsn = buildPostgresDSN(secret("POSTGRES_PASSWORD", "tpsa"))
+	}
+
 	cfg := &Config{
 		App: App{
-			Addr:              env("APP_ADDR", ":8080"),
-			Env:               env("APP_ENV", "development"),
-			LogLevel:          env("LOG_LEVEL", "info"),
-			SessionSecret:     env("SESSION_SECRET", ""),
-			SessionTTL:        envDuration("SESSION_TTL", 12*time.Hour),
-			MaxUploadBytes:    int64(envInt("MAX_UPLOAD_MB", 25)) << 20,
-			ShutdownTimeout:   envDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
-			RunMigrations:     envBool("RUN_MIGRATIONS", true),
-			BootstrapUser:     env("BOOTSTRAP_USERNAME", ""),
-			BootstrapPassword: env("BOOTSTRAP_PASSWORD", ""),
+			Addr:            env("APP_ADDR", ":8080"),
+			Env:             env("APP_ENV", "development"),
+			LogLevel:        env("LOG_LEVEL", "info"),
+			SessionSecret:   secret("SESSION_SECRET", ""),
+			SessionTTL:      envDuration("SESSION_TTL", 12*time.Hour),
+			MaxUploadBytes:  int64(envInt("MAX_UPLOAD_MB", 25)) << 20,
+			ShutdownTimeout: envDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
+			RunMigrations:   envBool("RUN_MIGRATIONS", true),
+			BootstrapUser:   env("BOOTSTRAP_USERNAME", ""),
+			// secret(), not env(): the very first credential this app ever
+			// uses is as worth protecting as any other.
+			BootstrapPassword: secret("BOOTSTRAP_PASSWORD", ""),
 		},
 		DB: DB{
-			DSN:             env("DATABASE_URL", ""),
+			DSN:             dsn,
 			MaxConns:        int32(envInt("DB_MAX_CONNS", 10)),
 			MinConns:        int32(envInt("DB_MIN_CONNS", 1)),
 			MaxConnLifetime: envDuration("DB_MAX_CONN_LIFETIME", time.Hour),
@@ -99,7 +127,7 @@ func Load() (*Config, error) {
 			Provider:       strings.ToLower(env("AI_PROVIDER", "")),
 			BaseURL:        strings.TrimRight(env("AI_BASE_URL", ""), "/"),
 			ChatPath:       env("AI_CHAT_PATH", "/chat/completions"),
-			APIKey:         env("AI_API_KEY", ""),
+			APIKey:         secret("AI_API_KEY", ""),
 			Model:          env("AI_MODEL", ""),
 			MaxTokens:      envInt("AI_MAX_TOKENS", 4096),
 			Temperature:    envFloat("AI_TEMPERATURE", 0.2),
@@ -109,10 +137,31 @@ func Load() (*Config, error) {
 			MaxConcurrency: envInt("AI_MAX_CONCURRENCY", 2),
 		},
 	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// buildPostgresDSN composes a connection string from the discrete POSTGRES_*
+// parts. Values are placed through url.UserPassword and url.URL rather than
+// concatenated by hand, so a password containing an '@', ':' or '/' -
+// entirely plausible for something generated for a Docker secret - is
+// percent-encoded correctly instead of corrupting the DSN.
+func buildPostgresDSN(password string) string {
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(env("POSTGRES_USER", "tpsa"), password),
+		Host:   env("POSTGRES_HOST", "localhost") + ":" + env("POSTGRES_PORT", "5432"),
+		Path:   "/" + env("POSTGRES_DB", "tpsa"),
+	}
+	q := url.Values{}
+	q.Set("sslmode", env("POSTGRES_SSLMODE", "disable"))
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func (c *Config) validate() error {
@@ -156,6 +205,35 @@ func env(key, def string) string {
 		return strings.TrimSpace(v)
 	}
 	return def
+}
+
+// secretFileSuffix is the convention Docker secrets (and several base images,
+// e.g. postgres's own POSTGRES_PASSWORD_FILE) follow: FOO_FILE names a file
+// whose contents are the real value of FOO, so the value itself never has to
+// sit in a plaintext environment variable - visible in `docker inspect`, a
+// process's environ, and most logging of "the environment this crashed
+// with" - the way KEY=value normally would.
+const secretFileSuffix = "_FILE"
+
+// readSecretEnv resolves key, preferring KEY_FILE when it is set: the file is
+// read and trimmed (a value written with `echo` or `printf` into a secret
+// file commonly carries a trailing newline). KEY itself is used when no
+// _FILE variant is set, which is what keeps `go run ./cmd/server` and a
+// plain .env working exactly as before - only a Docker deployment needs to
+// know this convention exists at all.
+func readSecretEnv(key, def string) (string, error) {
+	if path, ok := os.LookupEnv(key + secretFileSuffix); ok && strings.TrimSpace(path) != "" {
+		path = strings.TrimSpace(path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("config: read %s%s (%s): %w", key, secretFileSuffix, path, err)
+		}
+		if v := strings.TrimSpace(string(data)); v != "" {
+			return v, nil
+		}
+		return def, nil
+	}
+	return env(key, def), nil
 }
 
 func envInt(key string, def int) int {

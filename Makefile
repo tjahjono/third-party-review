@@ -58,22 +58,54 @@ env: ## Create .env from .env.example if it does not exist
 	@test -f .env && echo ".env already exists" || { \
 		cp .env.example .env; \
 		echo "Created .env from .env.example."; \
-		echo "Set SESSION_SECRET before starting:  openssl rand -hex 32"; \
 	}
+
+.PHONY: secrets
+secrets: ## Create secrets/*.txt (docker secrets: SESSION_SECRET, DB password, AI key, bootstrap password) if missing
+	@mkdir -p secrets
+	@test -f secrets/session_secret.txt || { \
+		openssl rand -hex 32 > secrets/session_secret.txt; \
+		echo "Generated secrets/session_secret.txt"; \
+	}
+	@for name in postgres_password ai_api_key bootstrap_password; do \
+		test -f secrets/$$name.txt && echo "secrets/$$name.txt already exists" || { \
+			cp secrets/$$name.txt.example secrets/$$name.txt; \
+			echo "Created secrets/$$name.txt from its placeholder - edit it before deploying."; \
+		}; \
+	done
 
 .PHONY: check-env
 check-env:
 	@test -f .env || { \
-		echo "No .env found. Run 'make env', set SESSION_SECRET, then try again."; \
+		echo "No .env found. Run 'make env', then try again."; \
+		exit 1; \
+	}
+	@test -f secrets/session_secret.txt || { \
+		echo "No secrets/ found. Run 'make secrets', edit the credential files it creates, then try again."; \
 		exit 1; \
 	}
 
 .PHONY: up
-up: check-env ## Start app + postgres in the background
+up: check-env ## Start app + postgres in the background (docker compose, single host)
 	$(COMPOSE) up -d --build
 	@echo
 	@echo "TPSA Reviewer is starting on http://localhost:$${APP_PORT:-8080}"
 	@echo "Follow the logs with 'make logs'."
+
+.PHONY: stack-build
+stack-build: ## Build and tag the app image for 'docker stack deploy' (swarm ignores 'build:')
+	docker build -f docker/Dockerfile -t tpsa-reviewer-app:$${IMAGE_TAG:-latest} .
+
+.PHONY: stack-deploy
+stack-deploy: check-env stack-build ## Build the image and deploy the stack to the local swarm
+	docker stack deploy -c docker/docker-compose.yml tpsa-reviewer
+	@echo
+	@echo "Deployed. 'docker stack services tpsa-reviewer' shows status;"
+	@echo "'docker service logs -f tpsa-reviewer_app' follows the app's logs."
+
+.PHONY: stack-rm
+stack-rm: ## Remove the stack from the local swarm (the postgres-data volume is kept)
+	docker stack rm tpsa-reviewer
 
 .PHONY: down
 down: ## Stop the stack (data volume is kept)

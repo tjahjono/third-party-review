@@ -25,6 +25,18 @@ go.work.sum
 # env file
 .env
 
+# Docker secrets: the real credential values docker-compose.yml mounts into
+# the containers. Only secrets/README.md and the *.example placeholders are
+# committed - see secrets/README.md.
+/secrets/*.txt
+
+# Sass toolchain for `make css`. The compiled stylesheet in
+# web/static/css/ IS committed - the app needs no build step - but the
+# node_modules that produce it are not.
+node_modules/
+package-lock.json
+package.json
+
 # Editor/IDE
 # .idea/
 # .vscode/

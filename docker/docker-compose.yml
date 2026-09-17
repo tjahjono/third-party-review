@@ -1,19 +1,51 @@
 # Docker Compose is the deployment target: one app container, one Postgres.
-# Run from the repository root:  docker compose -f docker/docker-compose.yml up
+#
+# Two ways to run this file, both supported without edits:
+#
+#   docker compose -f docker/docker-compose.yml --env-file .env up -d --build
+#     Local/single-host, non-swarm. `build:` below builds the app image.
+#
+#   docker stack deploy -c docker/docker-compose.yml tpsa-reviewer
+#     Docker Swarm. Swarm ignores `build:` entirely, so build and tag the
+#     image yourself first (`make stack-build`, or see the README) with the
+#     same name `image:` names below. Run this from the repository root so
+#     the root .env is picked up for variable substitution - `docker stack
+#     deploy` has no --env-file flag; unlike `docker compose`, it resolves a
+#     bare .env from the current directory.
+#
+# Either way, the four real credentials - SESSION_SECRET, the Postgres
+# password, AI_API_KEY and BOOTSTRAP_PASSWORD - come from Docker secrets
+# (see the `secrets:` block below and secrets/README.md), never from .env or
+# a plain environment variable. Everything else - ports, model name,
+# timeouts, usernames - stays in .env; see .env.example.
 name: tpsa-reviewer
 
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    deploy:
+      # `restart:` above is what `docker compose up` honours; Swarm ignores
+      # it and reads this instead. Both are harmless to leave in place under
+      # the other tool.
+      restart_policy:
+        condition: any
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-tpsa}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tpsa}
       POSTGRES_DB: ${POSTGRES_DB:-tpsa}
+      # The official postgres image supports this convention natively: no
+      # code of ours is involved on this side of the secret.
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
-      # Exposed on localhost only, for psql and inspection during development.
+      # Exposed on localhost only, for psql and inspection during
+      # development. Under Swarm's routing mesh a host-IP-scoped binding like
+      # this does not behave the same way across a multi-node cluster; drop
+      # this block entirely for a swarm deployment that isn't a single node,
+      # or add `mode: host` if you need it published from one specific node.
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       # The app runs migrations on startup, so it must not start against a
@@ -28,7 +60,13 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    # Used by `docker stack deploy`, which ignores `build:` above. Build and
+    # tag it yourself first with a matching name (`make stack-build`).
+    image: tpsa-reviewer-app:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    deploy:
+      restart_policy:
+        condition: any
     depends_on:
       postgres:
         condition: service_healthy
@@ -36,24 +74,38 @@ services:
       APP_ADDR: ":8080"
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
-      DATABASE_URL: postgres://${POSTGRES_USER:-tpsa}:${POSTGRES_PASSWORD:-tpsa}@postgres:5432/${POSTGRES_DB:-tpsa}?sslmode=disable
+      SESSION_SECRET_FILE: /run/secrets/session_secret
       SESSION_TTL: ${SESSION_TTL:-12h}
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       BOOTSTRAP_USERNAME: ${BOOTSTRAP_USERNAME:-}
-      BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
+      BOOTSTRAP_PASSWORD_FILE: /run/secrets/bootstrap_password
 
-      AI_PROVIDER: ${AI_PROVIDER}
+      # No DATABASE_URL here: the app builds the connection string itself
+      # from these parts plus POSTGRES_PASSWORD_FILE, so this service and
+      # postgres above share one secret (the bare password) instead of
+      # needing a second secret with a whole connection string baked in.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-tpsa}
+      POSTGRES_DB: ${POSTGRES_DB:-tpsa}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_CHAT_PATH: ${AI_CHAT_PATH:-/chat/completions}
-      AI_API_KEY: ${AI_API_KEY:-}
+      AI_API_KEY_FILE: /run/secrets/ai_api_key
       AI_MODEL: ${AI_MODEL:-}
       AI_MAX_TOKENS: ${AI_MAX_TOKENS:-4096}
       AI_TEMPERATURE: ${AI_TEMPERATURE:-0.2}
       AI_TIMEOUT: ${AI_TIMEOUT:-120s}
       AI_BATCH_SIZE: ${AI_BATCH_SIZE:-8}
       AI_MAX_CONCURRENCY: ${AI_MAX_CONCURRENCY:-2}
+    secrets:
+      - session_secret
+      - bootstrap_password
+      - postgres_password
+      - ai_api_key
     ports:
       - "${APP_PORT:-8080}:8080"
     healthcheck:
@@ -67,3 +119,21 @@ services:
 
 volumes:
   postgres-data:
+
+# File-based secrets: the same mechanism under `docker compose up` (Compose
+# mounts the file directly, no swarm needed) and `docker stack deploy`
+# (Swarm copies it into an encrypted secret object the first time you
+# deploy). Paths are resolved relative to this file's own directory, same as
+# `build: context:` above - ../secrets is the repository-root secrets/
+# folder. See secrets/README.md for what belongs in each file and how to
+# rotate one later; the short version is that Swarm secrets are immutable
+# once created, so a rotation needs a new secret name, not an edit in place.
+secrets:
+  session_secret:
+    file: ../secrets/session_secret.txt
+  postgres_password:
+    file: ../secrets/postgres_password.txt
+  ai_api_key:
+    file: ../secrets/ai_api_key.txt
+  bootstrap_password:
+    file: ../secrets/bootstrap_password.txt
