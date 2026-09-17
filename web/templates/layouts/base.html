@@ -57,6 +57,7 @@
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
             <li><a class="dropdown-item" href="/account">Your account</a></li>
+            <li><a class="dropdown-item {{ if eq .Active "users" }}active{{ end }}" href="/users">User management</a></li>
             <li><a class="dropdown-item {{ if eq .Active "settings" }}active{{ end }}" href="/settings">Settings</a></li>
             <li><hr class="dropdown-divider"></li>
             <li>

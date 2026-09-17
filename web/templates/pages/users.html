@@ -1,0 +1,165 @@
+{{ define "content" }}
+{{ $d := .Data }}
+{{ $self := $d.Self }}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">User management</h1>
+    <p class="text-secondary mb-0">
+      Every signed-in account can manage every other - there are no separate permission tiers.
+      Deactivating an account blocks sign-in immediately without deleting anything it authored.
+    </p>
+  </div>
+</div>
+
+{{ if $d.Error }}<div class="alert alert-danger">{{ $d.Error }}</div>{{ end }}
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h2 class="h5 card-title mb-3">Add a team member</h2>
+    <form method="post" action="/users">
+      <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+      <div class="row g-3">
+        <div class="col-12 col-sm-6 col-lg-3">
+          <label class="form-label" for="new-username">Username</label>
+          <input class="form-control" id="new-username" type="text" name="username" required
+                 minlength="3" maxlength="64" autocomplete="off">
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3">
+          <label class="form-label" for="new-display-name">Display name</label>
+          <input class="form-control" id="new-display-name" type="text" name="display_name"
+                 placeholder="Defaults to the username">
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3">
+          <label class="form-label" for="new-password">Password</label>
+          <input class="form-control" id="new-password" type="password" name="password" required
+                 minlength="12" autocomplete="new-password">
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3">
+          <label class="form-label" for="new-password-confirm">Confirm password</label>
+          <input class="form-control" id="new-password-confirm" type="password" name="password_confirm" required
+                 minlength="12" autocomplete="new-password">
+        </div>
+      </div>
+      <div class="form-text mb-3">At least 12 characters. They can change it, and set up two-factor, from their own account page.</div>
+      <button class="btn btn-primary" type="submit">Add account</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <h2 class="h5 card-title mb-3">Accounts <span class="text-secondary fw-normal">({{ len $d.Users }})</span></h2>
+
+    {{ range $u := $d.Users }}
+    {{ $isSelf := and $self (eq $u.ID $self.ID) }}
+    <div class="border rounded p-3 mb-3">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+          <span class="fw-semibold">{{ $u.Username }}</span>
+          {{ if and $u.DisplayName (ne $u.DisplayName $u.Username) }}
+            <span class="text-secondary">&middot; {{ $u.DisplayName }}</span>
+          {{ end }}
+          {{ if $isSelf }}<span class="badge text-bg-light border ms-1">You</span>{{ end }}
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          {{ if $u.Active }}
+            <span class="badge text-bg-success">Active</span>
+          {{ else }}
+            <span class="badge text-bg-secondary">Deactivated</span>
+          {{ end }}
+          {{ if $u.MFAEnabled }}
+            <span class="badge text-bg-light border">2FA on</span>
+          {{ end }}
+          <button class="btn btn-outline-secondary btn-sm" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#manage-{{ $u.ID }}">
+            Manage
+          </button>
+        </div>
+      </div>
+      <p class="text-secondary small mb-0 mt-1">Last signed in: {{ dateOrDash $u.LastLoginAt }}</p>
+
+      <div class="collapse mt-3" id="manage-{{ $u.ID }}">
+        <hr>
+        <div class="row g-4">
+          <div class="col-12 col-lg-6">
+            <h3 class="h6">Username &amp; display name</h3>
+            <form method="post" action="/users/{{ $u.ID }}/rename" class="mb-4">
+              <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+              <div class="row g-2">
+                <div class="col-12 col-sm-6">
+                  <label class="form-label visually-hidden" for="username-{{ $u.ID }}">Username</label>
+                  <input class="form-control" id="username-{{ $u.ID }}" type="text" name="username"
+                         value="{{ $u.Username }}" required minlength="3" maxlength="64">
+                </div>
+                <div class="col-12 col-sm-6">
+                  <label class="form-label visually-hidden" for="display-name-{{ $u.ID }}">Display name</label>
+                  <input class="form-control" id="display-name-{{ $u.ID }}" type="text" name="display_name"
+                         value="{{ $u.DisplayName }}" placeholder="Defaults to the username">
+                </div>
+              </div>
+              <button class="btn btn-outline-primary btn-sm mt-2" type="submit">Save name</button>
+            </form>
+
+            <h3 class="h6">Reset password</h3>
+            <form method="post" action="/users/{{ $u.ID }}/password">
+              <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+              <div class="row g-2">
+                <div class="col-12 col-sm-6">
+                  <label class="form-label visually-hidden" for="password-{{ $u.ID }}">New password</label>
+                  <input class="form-control" id="password-{{ $u.ID }}" type="password" name="password"
+                         placeholder="New password" required minlength="12" autocomplete="new-password">
+                </div>
+                <div class="col-12 col-sm-6">
+                  <label class="form-label visually-hidden" for="password-confirm-{{ $u.ID }}">Confirm new password</label>
+                  <input class="form-control" id="password-confirm-{{ $u.ID }}" type="password" name="password_confirm"
+                         placeholder="Confirm new password" required minlength="12" autocomplete="new-password">
+                </div>
+              </div>
+              <div class="form-text">Tell them the new password yourself - it isn't sent anywhere automatically.</div>
+              <button class="btn btn-outline-primary btn-sm mt-2" type="submit">Reset password</button>
+            </form>
+          </div>
+
+          <div class="col-12 col-lg-6">
+            <h3 class="h6">Two-factor authentication</h3>
+            {{ if $u.MFAEnabled }}
+              <p class="text-secondary small">
+                On since {{ dateOrDash $u.MFAEnrolledAt }}. Use this if they're locked out - lost
+                phone, no recovery codes - and cannot turn it off themselves.
+              </p>
+              <form method="post" action="/users/{{ $u.ID }}/mfa/reset" class="mb-4">
+                <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+                <button class="btn btn-outline-danger btn-sm" type="submit">Turn off their two-factor</button>
+              </form>
+            {{ else }}
+              <p class="text-secondary small mb-4">Not set up. They can turn it on from their own account page.</p>
+            {{ end }}
+
+            <h3 class="h6">Account status</h3>
+            {{ if $isSelf }}
+              <p class="text-secondary small mb-0">
+                You can't deactivate your own account. Manage your password and two-factor from
+                <a href="/account">Your account</a>.
+              </p>
+            {{ else if $u.Active }}
+              <p class="text-secondary small">Blocks sign-in immediately. Nothing they authored is deleted.</p>
+              <form method="post" action="/users/{{ $u.ID }}/deactivate">
+                <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+                <button class="btn btn-outline-danger btn-sm" type="submit">Deactivate account</button>
+              </form>
+            {{ else }}
+              <p class="text-secondary small">Sign-in is currently blocked for this account.</p>
+              <form method="post" action="/users/{{ $u.ID }}/reactivate">
+                <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+                <button class="btn btn-outline-success btn-sm" type="submit">Reactivate account</button>
+              </form>
+            {{ end }}
+          </div>
+        </div>
+      </div>
+    </div>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

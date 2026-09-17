@@ -75,6 +75,18 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if errors.Is(err, auth.ErrAccountDeactivated) {
+			h.renderPage(w, r, http.StatusUnauthorized, "login", pageData{
+				Title:  "Sign in",
+				Active: "login",
+				Data: loginView{
+					Username: username,
+					Next:     next,
+					Error:    "This account has been deactivated. Ask a teammate to reactivate it from user management.",
+				},
+			})
+			return
+		}
 		h.fail(w, r, err)
 		return
 	}

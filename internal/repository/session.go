@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
+
 	"third-party-review/internal/helper"
 	"third-party-review/internal/model"
 )
@@ -14,6 +16,10 @@ type SessionRepository interface {
 	Promote(ctx context.Context, id string, expiresAt time.Time) error
 	Delete(ctx context.Context, id string) error
 	DeleteExpired(ctx context.Context, before time.Time) (int, error)
+	// DeleteByUser ends every session for an account. Used when an account is
+	// deactivated, so the block takes effect immediately rather than waiting
+	// for whatever session that person already holds to expire on its own.
+	DeleteByUser(ctx context.Context, userID uuid.UUID) (int, error)
 }
 
 type sessionRepository struct {
@@ -67,6 +73,14 @@ func (r *sessionRepository) Delete(ctx context.Context, id string) error {
 
 func (r *sessionRepository) DeleteExpired(ctx context.Context, before time.Time) (int, error) {
 	tag, err := r.db.Querier(ctx).Exec(ctx, `DELETE FROM sessions WHERE expires_at < $1`, before)
+	if err != nil {
+		return 0, helper.MapErr(err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+func (r *sessionRepository) DeleteByUser(ctx context.Context, userID uuid.UUID) (int, error) {
+	tag, err := r.db.Querier(ctx).Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
 	if err != nil {
 		return 0, helper.MapErr(err)
 	}

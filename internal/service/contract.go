@@ -123,9 +123,17 @@ type AuthService interface {
 	UserCount(ctx context.Context) (int, error)
 	Bootstrap(ctx context.Context, username, password string) error
 
+	// User management. Single role: any signed-in user can manage any other
+	// account, including their own rename/reset actions.
+	ListUsers(ctx context.Context) ([]*model.User, error)
+	RenameUser(ctx context.Context, userID uuid.UUID, username, displayName string) error
+	AdminResetPassword(ctx context.Context, userID uuid.UUID, next string) error
+	SetUserActive(ctx context.Context, userID uuid.UUID, active bool, actingUserID uuid.UUID) error
+
 	BeginMFAEnrolment(ctx context.Context, userID uuid.UUID) (*dto.MFAEnrolment, error)
 	CompleteMFAEnrolment(ctx context.Context, userID uuid.UUID, secret, code string) ([]string, error)
 	DisableMFA(ctx context.Context, userID uuid.UUID, password string) error
+	AdminResetMFA(ctx context.Context, userID uuid.UUID) error
 	RegenerateRecoveryCodes(ctx context.Context, userID uuid.UUID, password string) ([]string, error)
 }
 

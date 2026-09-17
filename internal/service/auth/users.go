@@ -115,6 +115,105 @@ func (s *Service) GetUser(ctx context.Context, id uuid.UUID) (*model.User, error
 	return s.users.GetByID(ctx, id)
 }
 
+// ListUsers returns every account for the user management screen. There is
+// a single role - anyone signed in can see and manage every other account -
+// so this carries no viewer-scoping.
+func (s *Service) ListUsers(ctx context.Context) ([]*model.User, error) {
+	return s.users.List(ctx)
+}
+
+// RenameUser updates a teammate's username and display name.
+func (s *Service) RenameUser(ctx context.Context, userID uuid.UUID, username, displayName string) error {
+	username = strings.TrimSpace(username)
+	displayName = strings.TrimSpace(displayName)
+	if err := validateUsername(username); err != nil {
+		return err
+	}
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if displayName == "" {
+		displayName = username
+	}
+	user.Username = username
+	user.DisplayName = displayName
+	if err := s.users.Update(ctx, user); err != nil {
+		if errors.Is(err, helper.ErrAlreadyExists) {
+			return helper.ValidationError{Field: "username", Message: "That username is already taken."}
+		}
+		return err
+	}
+	s.log.Info("account renamed", "user_id", userID, "username", username)
+	return nil
+}
+
+// AdminResetPassword sets a new password for another account, without the
+// current-password check ChangePassword requires. It exists for a teammate
+// who is locked out and cannot supply their own current password.
+func (s *Service) AdminResetPassword(ctx context.Context, userID uuid.UUID, next string) error {
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := ValidatePassword(next, user.Username); err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(next), bcryptCost)
+	if err != nil {
+		return fmt.Errorf("auth: hash password: %w", err)
+	}
+	user.PasswordHash = string(hash)
+	if err := s.users.Update(ctx, user); err != nil {
+		return err
+	}
+	s.log.Warn("password reset by another account", "username", user.Username, "by", userID)
+	return nil
+}
+
+// SetUserActive turns an account's ability to sign in on or off. Deactivating
+// is refused for your own account (to avoid an accidental self-lockout with
+// nobody left to undo it) and for the last remaining active account (which
+// would lock out the whole team). Deactivating also ends every session the
+// account currently holds, so the block is immediate rather than waiting for
+// a cookie to expire.
+func (s *Service) SetUserActive(ctx context.Context, userID uuid.UUID, active bool, actingUserID uuid.UUID) error {
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.Active == active {
+		return nil
+	}
+	if !active {
+		if userID == actingUserID {
+			return helper.ValidationError{Field: "active", Message: "You can't deactivate your own account. Have another teammate do it."}
+		}
+		n, err := s.users.ActiveCount(ctx)
+		if err != nil {
+			return err
+		}
+		if n <= 1 {
+			return helper.ValidationError{Field: "active", Message: "At least one account must stay active."}
+		}
+	}
+
+	user.Active = active
+	if err := s.users.Update(ctx, user); err != nil {
+		return err
+	}
+
+	if !active {
+		if _, err := s.sessions.DeleteByUser(ctx, userID); err != nil {
+			s.log.Warn("could not clear sessions for a deactivated account", "user_id", userID, "error", err)
+		}
+		s.log.Warn("account deactivated", "username", user.Username, "by", actingUserID)
+	} else {
+		s.log.Info("account reactivated", "username", user.Username, "by", actingUserID)
+	}
+	return nil
+}
+
 // Bootstrap creates the first account from configuration if no users exist.
 // It is a no-op once anyone has been created, so restarting the container
 // cannot resurrect or reset an account.

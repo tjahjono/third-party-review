@@ -53,6 +53,10 @@ var ErrMFARequired = errors.New("mfa required")
 // ErrInvalidMFACode is returned for a wrong or reused authenticator code.
 var ErrInvalidMFACode = errors.New("invalid authenticator code")
 
+// ErrAccountDeactivated is returned when a correct password belongs to an
+// account that has been switched off from the user management screen.
+var ErrAccountDeactivated = errors.New("this account has been deactivated")
+
 type Service struct {
 	users         repository.UserRepository
 	sessions      repository.SessionRepository
@@ -111,6 +115,11 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent, ip s
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		s.log.Warn("failed login", "username", username, "ip", ip)
 		return nil, ErrInvalidCredentials
+	}
+
+	if !user.Active {
+		s.log.Warn("login attempt on a deactivated account", "username", username, "ip", ip)
+		return nil, ErrAccountDeactivated
 	}
 
 	ttl := s.sessionTTL
@@ -202,6 +211,14 @@ func (s *Service) Authenticate(ctx context.Context, sessionID string) (*model.Us
 	user, err := s.users.GetByID(ctx, session.UserID)
 	if err != nil {
 		return nil, session, err
+	}
+	if !user.Active {
+		// Deactivation deletes sessions as it happens (see SetUserActive), so
+		// finding one here means it was issued in the gap or survived some
+		// other way. Either way, honour the deactivation and clean it up now
+		// rather than granting access.
+		_ = s.sessions.Delete(ctx, session.ID)
+		return nil, session, helper.ErrNotFound
 	}
 	return user, session, nil
 }

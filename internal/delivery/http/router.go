@@ -78,6 +78,19 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/risk-matrix", h.UpdateRiskMatrix)
 		})
 
+		r.Route("/users", func(r chi.Router) {
+			r.Get("/", h.UsersPage)
+			r.Post("/", h.CreateAccount)
+
+			r.Route("/{userID}", func(r chi.Router) {
+				r.Post("/rename", h.RenameAccount)
+				r.Post("/password", h.ResetAccountPassword)
+				r.Post("/mfa/reset", h.ResetAccountMFA)
+				r.Post("/deactivate", h.DeactivateAccount)
+				r.Post("/reactivate", h.ReactivateAccount)
+			})
+		})
+
 		r.Route("/account", func(r chi.Router) {
 			r.Get("/", h.AccountPage)
 			r.Post("/password", h.ChangePassword)

@@ -24,6 +24,15 @@ type Routes interface {
 	SettingsPage(w http.ResponseWriter, r *http.Request)
 	UpdateRiskMatrix(w http.ResponseWriter, r *http.Request)
 
+	// User management
+	UsersPage(w http.ResponseWriter, r *http.Request)
+	CreateAccount(w http.ResponseWriter, r *http.Request)
+	RenameAccount(w http.ResponseWriter, r *http.Request)
+	ResetAccountPassword(w http.ResponseWriter, r *http.Request)
+	ResetAccountMFA(w http.ResponseWriter, r *http.Request)
+	DeactivateAccount(w http.ResponseWriter, r *http.Request)
+	ReactivateAccount(w http.ResponseWriter, r *http.Request)
+
 	// Authentication and account
 	LoginPage(w http.ResponseWriter, r *http.Request)
 	Login(w http.ResponseWriter, r *http.Request)

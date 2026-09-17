@@ -8,8 +8,10 @@ import (
 
 // User is an internal team member. Table: users.
 //
-// There is a single role: everyone who can log in can do everything.
-// Role/permission infrastructure is deliberately absent (project non-goal).
+// There is a single role: everyone who can log in can do everything,
+// including managing other accounts. Role/permission infrastructure is
+// deliberately absent (project non-goal) - Active is a membership switch,
+// not a permission tier.
 type User struct {
 	ID          uuid.UUID `json:"id"`
 	Username    string    `json:"username"`
@@ -17,6 +19,11 @@ type User struct {
 	// PasswordHash never leaves the server; it is excluded from JSON so a
 	// model cannot leak it by being handed to an encoder.
 	PasswordHash string `json:"-"`
+
+	// Active gates login. Deactivating an account (rather than deleting it)
+	// keeps every row it authored - finalized feedback, past logins - intact
+	// and attributable, while blocking any further sign-in immediately.
+	Active bool `json:"active"`
 
 	// MFA is optional per user. When MFAEnabled is true a TOTP code from an
 	// authenticator app is required after the password step.

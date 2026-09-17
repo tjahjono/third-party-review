@@ -125,6 +125,32 @@ func (s *Service) DisableMFA(ctx context.Context, userID uuid.UUID, password str
 	return nil
 }
 
+// AdminResetMFA force-disables a second factor on another account, without
+// the current-password check DisableMFA requires. It exists for a teammate
+// who is locked out - phone lost, no recovery codes on hand - and so cannot
+// clear their own second factor.
+func (s *Service) AdminResetMFA(ctx context.Context, userID uuid.UUID) error {
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !user.MFAEnabled {
+		return nil
+	}
+
+	user.MFAEnabled = false
+	user.MFASecret = ""
+	user.MFAEnrolledAt = nil
+	if err := s.users.Update(ctx, user); err != nil {
+		return err
+	}
+	if err := s.recoveryCodes.Replace(ctx, userID, nil); err != nil {
+		return err
+	}
+	s.log.Warn("MFA reset by another account", "username", user.Username)
+	return nil
+}
+
 // RegenerateRecoveryCodes issues a fresh set, invalidating the old ones.
 func (s *Service) RegenerateRecoveryCodes(ctx context.Context, userID uuid.UUID, password string) ([]string, error) {
 	user, err := s.users.GetByID(ctx, userID)
