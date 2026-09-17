@@ -20,6 +20,7 @@ type Repositories struct {
 	Users             UserRepository
 	RecoveryCodes     RecoveryCodeRepository
 	Sessions          SessionRepository
+	Settings          SettingsRepository
 }
 
 // NewRepositories builds the full repository set backed by db, each through
@@ -41,5 +42,6 @@ func NewRepositories(db *helper.DB) *Repositories {
 		Users:             NewUserRepository(db),
 		RecoveryCodes:     NewRecoveryCodeRepository(db),
 		Sessions:          NewSessionRepository(db),
+		Settings:          NewSettingsRepository(db),
 	}
 }

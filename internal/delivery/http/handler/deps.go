@@ -14,6 +14,7 @@ type Deps struct {
 	Reviews     service.ReviewService
 	Dashboards  service.DashboardService
 	Auth        service.AuthService
+	Settings    service.SettingsService
 
 	// Templates is a concrete renderer rather than an interface: it is a pure
 	// function of the embedded template set with no I/O to fake, and an
@@ -43,6 +44,8 @@ func (d Deps) validate() error {
 		missing = "Dashboards"
 	case d.Auth == nil:
 		missing = "Auth"
+	case d.Settings == nil:
+		missing = "Settings"
 	case d.Templates == nil:
 		missing = "Templates"
 	case d.Log == nil:

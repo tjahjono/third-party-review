@@ -3,6 +3,7 @@ package helper
 import (
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"third-party-review/internal/model"
 )
@@ -12,8 +13,43 @@ import (
 // in one service because the review service computes them, the export writes
 // them and the templates display them.
 
+// currentMatrix is the risk matrix Band and BandFromFloat compute against.
+// It is process-wide mutable state rather than a parameter threaded through
+// every caller deliberately: Band/BandFromFloat are called from the template
+// funcs, the CSV/Excel exporter, the AI summary prompt builder and the
+// dashboard aggregator - four packages that otherwise share nothing - and
+// this is a single-tenant app with exactly one matrix for everyone (see
+// model.RiskMatrix), so a small piece of shared, swappable state is a better
+// fit here than plumbing a settings value through all four call paths.
+// main loads the persisted matrix into it at startup; the settings service
+// calls SetRiskMatrix again whenever someone saves a change, so every
+// already-open page picks up the new mapping on its next render with no
+// restart needed.
+var currentMatrix atomic.Pointer[model.RiskMatrix]
+
+func init() {
+	m := model.DefaultRiskMatrix
+	currentMatrix.Store(&m)
+}
+
+// SetRiskMatrix installs the matrix Band and BandFromFloat use from now on.
+func SetRiskMatrix(m model.RiskMatrix) { currentMatrix.Store(&m) }
+
+// CurrentRiskMatrix returns the matrix currently in effect, for the settings
+// page to pre-fill its form with what is actually live.
+func CurrentRiskMatrix() model.RiskMatrix { return *currentMatrix.Load() }
+
 // ValidRiskScore reports whether the score is inside the 1-5 scale.
 func ValidRiskScore(r model.RiskScore) bool { return r >= model.RiskMin && r <= model.RiskMax }
+
+// ValidRiskMatrix reports whether a risk matrix is usable: every cutoff must
+// be inside the 1-5 scale, and non-decreasing so each band is either
+// reachable in score order or deliberately collapsed (two equal cutoffs skip
+// a band; cutoffs out of order would make one unreachable by accident).
+func ValidRiskMatrix(m model.RiskMatrix) bool {
+	return ValidRiskScore(m.MediumMin) && ValidRiskScore(m.HighMin) && ValidRiskScore(m.CriticalMin) &&
+		m.MediumMin <= m.HighMin && m.HighMin <= m.CriticalMin
+}
 
 // ClampRiskScore forces a score into the 1-5 range. Models occasionally return
 // 0 or 6; clamping is preferable to discarding an otherwise usable review.
@@ -27,34 +63,42 @@ func ClampRiskScore(r model.RiskScore) model.RiskScore {
 	return r
 }
 
-// Band maps a 1-5 score onto a display band. The mapping is deliberately
-// asymmetric: a 5 is called out as Critical because a single such finding
-// should be visible in a list of a hundred answers.
+// Band maps a 1-5 score onto a display band, using the currently configured
+// risk matrix (see CurrentRiskMatrix). A score of 0 - "not scored" - is
+// always Unknown regardless of the matrix, since no cutoff should be able to
+// claim an answer the AI never rated.
 func Band(r model.RiskScore) model.RiskBand {
+	m := CurrentRiskMatrix()
 	switch {
 	case r <= 0:
 		return model.BandUnknown
-	case r <= 2:
+	case r < m.MediumMin:
 		return model.BandLow
-	case r == 3:
+	case r < m.HighMin:
 		return model.BandMedium
-	case r == 4:
+	case r < m.CriticalMin:
 		return model.BandHigh
 	default:
 		return model.BandCritical
 	}
 }
 
-// BandFromFloat maps an aggregated (fractional) score onto a display band.
+// BandFromFloat maps an aggregated (fractional) score onto a display band,
+// using the same configured matrix as Band. Each integer cutoff is shifted
+// down by half a point so a weighted average that lands exactly between two
+// whole scores still falls on the side a reviewer would expect - the same
+// relationship the original hardcoded bands had (a MediumMin of 3 meant an
+// aggregate below 2.5 read as Low).
 func BandFromFloat(f float64) model.RiskBand {
+	m := CurrentRiskMatrix()
 	switch {
 	case f <= 0:
 		return model.BandUnknown
-	case f < 2.5:
+	case f < float64(m.MediumMin)-0.5:
 		return model.BandLow
-	case f < 3.5:
+	case f < float64(m.HighMin)-0.5:
 		return model.BandMedium
-	case f < 4.5:
+	case f < float64(m.CriticalMin)-0.5:
 		return model.BandHigh
 	default:
 		return model.BandCritical

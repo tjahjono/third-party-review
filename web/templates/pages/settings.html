@@ -1,0 +1,98 @@
+{{ define "content" }}
+{{ $d := .Data }}
+{{ $m := $d.Matrix }}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">Settings</h1>
+    <p class="text-secondary mb-0">App-wide configuration. This is a single-tenant tool, so there is one setting for everyone.</p>
+  </div>
+</div>
+
+{{ if $d.Error }}<div class="alert alert-danger">{{ $d.Error }}</div>{{ end }}
+
+<div class="row g-4">
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5 card-title mb-2">Severity risk matrix</h2>
+        <p class="text-secondary small">
+          Which raw 1-5 AI risk score counts as Low, Medium, High or Critical. This mapping is
+          used everywhere a band is shown or computed: question cards, domain and overall
+          summary scores, the dashboard, and the CSV/Excel exports. It takes effect immediately,
+          including on pages already open - nothing needs a restart.
+        </p>
+
+        <form method="post" action="/settings/risk-matrix">
+          <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+
+          <div class="row g-3">
+            <div class="col-12 col-sm-4">
+              <label class="form-label" for="medium_min">Medium starts at</label>
+              <select class="form-select" id="medium_min" name="medium_min">
+                {{ range $s := (seq 1 5) }}
+                <option value="{{ $s }}" {{ if eq $s (int $m.MediumMin) }}selected{{ end }}>{{ $s }}</option>
+                {{ end }}
+              </select>
+              <div class="form-text">Every score below this is Low.</div>
+            </div>
+            <div class="col-12 col-sm-4">
+              <label class="form-label" for="high_min">High starts at</label>
+              <select class="form-select" id="high_min" name="high_min">
+                {{ range $s := (seq 1 5) }}
+                <option value="{{ $s }}" {{ if eq $s (int $m.HighMin) }}selected{{ end }}>{{ $s }}</option>
+                {{ end }}
+              </select>
+            </div>
+            <div class="col-12 col-sm-4">
+              <label class="form-label" for="critical_min">Critical starts at</label>
+              <select class="form-select" id="critical_min" name="critical_min">
+                {{ range $s := (seq 1 5) }}
+                <option value="{{ $s }}" {{ if eq $s (int $m.CriticalMin) }}selected{{ end }}>{{ $s }}</option>
+                {{ end }}
+              </select>
+            </div>
+          </div>
+          <div class="form-text mb-3">
+            Setting two of these the same skips that band entirely - e.g. making High and Critical
+            equal means a score jumps straight from Medium to Critical.
+          </div>
+
+          <button class="btn btn-primary" type="submit">Save</button>
+        </form>
+
+        {{ if $m.UpdatedAt }}
+        <p class="text-secondary small mt-3 mb-0">
+          Last changed {{ date $m.UpdatedAt }}{{ if $d.UpdatedBy }} by {{ defaultStr $d.UpdatedBy.Username $d.UpdatedBy.DisplayName }}{{ end }}.
+        </p>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h5 card-title mb-3">What this looks like</h2>
+        <p class="text-secondary small">The band each raw score currently maps to.</p>
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th scope="col">Score</th>
+              <th scope="col">Band</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range $d.Preview }}
+            <tr>
+              <td class="mono">{{ .Score }}/5</td>
+              <td><span class="{{ bandClass .Band }}">{{ bandLabel .Band }}</span></td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

@@ -184,6 +184,22 @@ func templateFuncs() template.FuncMap {
 		"add": func(a, b int) int { return a + b },
 		"sub": func(a, b int) int { return a - b },
 
+		// seq and int back the settings page's threshold dropdowns: seq(1,5)
+		// gives the 1-5 scale to range over, and int converts a model.RiskScore
+		// (or any other small named int type) to a plain int so it compares
+		// equal to a literal in the template.
+		"seq": func(from, to int) []int {
+			if to < from {
+				return nil
+			}
+			out := make([]int, 0, to-from+1)
+			for i := from; i <= to; i++ {
+				out = append(out, i)
+			}
+			return out
+		},
+		"int": func(v model.RiskScore) int { return int(v) },
+
 		"isQuestionRow": func(k dto.RowKind) bool { return k == dto.RowQuestion },
 		"isDividerRow":  func(k dto.RowKind) bool { return k == dto.RowDivider },
 

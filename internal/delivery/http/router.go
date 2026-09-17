@@ -73,6 +73,11 @@ func NewRouter(d Deps) http.Handler {
 
 		r.Get("/", h.DashboardPage)
 
+		r.Route("/settings", func(r chi.Router) {
+			r.Get("/", h.SettingsPage)
+			r.Post("/risk-matrix", h.UpdateRiskMatrix)
+		})
+
 		r.Route("/account", func(r chi.Router) {
 			r.Get("/", h.AccountPage)
 			r.Post("/password", h.ChangePassword)

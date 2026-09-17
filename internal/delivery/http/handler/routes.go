@@ -8,6 +8,7 @@ import (
 	"third-party-review/internal/service/auth"
 	"third-party-review/internal/service/dashboard"
 	"third-party-review/internal/service/review"
+	"third-party-review/internal/service/settings"
 )
 
 // Routes is the delivery-layer contract: the set of HTTP handlers the router
@@ -18,6 +19,10 @@ import (
 type Routes interface {
 	// Dashboard
 	DashboardPage(w http.ResponseWriter, r *http.Request)
+
+	// Settings
+	SettingsPage(w http.ResponseWriter, r *http.Request)
+	UpdateRiskMatrix(w http.ResponseWriter, r *http.Request)
 
 	// Authentication and account
 	LoginPage(w http.ResponseWriter, r *http.Request)
@@ -93,4 +98,5 @@ var (
 	_ service.ReviewService    = (*review.Service)(nil)
 	_ service.DashboardService = (*dashboard.Service)(nil)
 	_ service.AuthService      = (*auth.Service)(nil)
+	_ service.SettingsService  = (*settings.Service)(nil)
 )

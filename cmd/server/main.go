@@ -27,6 +27,7 @@ import (
 	"third-party-review/internal/service/dashboard"
 	"third-party-review/internal/service/parser"
 	"third-party-review/internal/service/review"
+	"third-party-review/internal/service/settings"
 	"third-party-review/migrations"
 	"third-party-review/web"
 )
@@ -118,6 +119,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	settingsSvc, err := settings.New(
+		settings.FromRepositories(repos, log))
+	if err != nil {
+		return err
+	}
+	// Install the persisted risk matrix before anything renders, so the very
+	// first page served reflects the setting on record rather than the
+	// compiled-in default.
+	if err := settingsSvc.LoadRiskMatrix(ctx); err != nil {
+		return fmt.Errorf("load risk matrix: %w", err)
+	}
 
 	// Create the first account from configuration when the database is empty.
 	// A no-op once any user exists, so a restart can never reset an account.
@@ -148,6 +160,7 @@ func run() error {
 		Reviews:     reviewSvc,
 		Dashboards:  dashboardSvc,
 		Auth:        authSvc,
+		Settings:    settingsSvc,
 		Templates:   renderer,
 		SessionTTL:  cfg.App.SessionTTL,
 		Log:         log,

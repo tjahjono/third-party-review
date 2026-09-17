@@ -97,6 +97,16 @@ type DashboardService interface {
 	Build(ctx context.Context) (*dto.Dashboard, error)
 }
 
+// SettingsService manages app-wide configuration that has exactly one value
+// for the whole (single-tenant) deployment.
+type SettingsService interface {
+	GetRiskMatrix(ctx context.Context) (*model.RiskMatrix, error)
+	// UpdateRiskMatrix validates, persists and immediately applies a new
+	// severity risk matrix. userID attributes the change for the settings
+	// page's "last changed by" line.
+	UpdateRiskMatrix(ctx context.Context, m *model.RiskMatrix, userID *uuid.UUID) error
+}
+
 // AuthService covers login, sessions and the optional second factor.
 type AuthService interface {
 	Login(ctx context.Context, username, password, userAgent, ip string) (*dto.LoginResult, error)

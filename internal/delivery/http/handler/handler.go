@@ -28,6 +28,7 @@ type Handler struct {
 	reviews     service.ReviewService
 	dashboards  service.DashboardService
 	auth        service.AuthService
+	settings    service.SettingsService
 	templates   *Renderer
 	sessionTTL  time.Duration
 	log         *slog.Logger
@@ -46,6 +47,7 @@ func New(d Deps) (*Handler, error) {
 		reviews:     d.Reviews,
 		dashboards:  d.Dashboards,
 		auth:        d.Auth,
+		settings:    d.Settings,
 		templates:   d.Templates,
 		sessionTTL:  ttl,
 		log:         d.Log,
