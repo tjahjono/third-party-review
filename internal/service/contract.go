@@ -54,6 +54,15 @@ type SignOffService interface {
 	// dividers reconstructed and the Assessor Feedback column filled from the
 	// finalized (or, if not yet signed off, clearly marked draft) feedback.
 	ExportXLSX(ctx context.Context, assessmentID uuid.UUID, w io.Writer) error
+
+	// PreviewAnswerRevisions parses a questionnaire the vendor has revised
+	// and returned, and matches its rows against this assessment's existing
+	// questions by domain and question text. It writes nothing.
+	PreviewAnswerRevisions(ctx context.Context, assessmentID uuid.UUID, filename string, r io.Reader) (*dto.AnswerRevisionPreview, error)
+	// ApplyAnswerRevisions writes the confirmed answer changes from a prior
+	// PreviewAnswerRevisions call and returns how many questions were
+	// actually changed.
+	ApplyAnswerRevisions(ctx context.Context, assessmentID uuid.UUID, revisions []dto.AnswerRevisionInput) (int, error)
 }
 
 // RubricService manages the optional policy an assessment is judged against.

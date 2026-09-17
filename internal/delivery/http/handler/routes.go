@@ -80,6 +80,8 @@ type Routes interface {
 	ReopenAssessment(w http.ResponseWriter, r *http.Request)
 	ExportCSV(w http.ResponseWriter, r *http.Request)
 	ExportXLSX(w http.ResponseWriter, r *http.Request)
+	UploadAnswerRevisions(w http.ResponseWriter, r *http.Request)
+	ApplyAnswerRevisions(w http.ResponseWriter, r *http.Request)
 
 	// Rubric
 	RubricPanel(w http.ResponseWriter, r *http.Request)

@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"third-party-review/internal/delivery/http/middleware"
@@ -54,9 +55,20 @@ func (h *Handler) AssessmentDetail(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+
+	var flash string
+	if n, err := strconv.Atoi(r.URL.Query().Get("revised")); err == nil && n > 0 {
+		if n == 1 {
+			flash = "1 answer was revised and reset to pending review."
+		} else {
+			flash = strconv.Itoa(n) + " answers were revised and reset to pending review."
+		}
+	}
+
 	h.renderPage(w, r, http.StatusOK, "assessment", pageData{
 		Title:   view.Assessment.Title,
 		Active:  "assessments",
+		Flash:   flash,
 		Domains: view.Domains,
 		Data:    view,
 	})

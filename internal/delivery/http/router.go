@@ -135,6 +135,10 @@ func NewRouter(d Deps) http.Handler {
 				r.Post("/close", h.CloseAssessment)
 				r.Post("/reopen", h.ReopenAssessment)
 
+				// Revised third-party answers
+				r.Post("/revisions/preview", h.UploadAnswerRevisions)
+				r.Post("/revisions/apply", h.ApplyAnswerRevisions)
+
 				// Rubric
 				r.Get("/rubric", h.RubricPanel)
 				r.Post("/rubric", h.AttachRubric)

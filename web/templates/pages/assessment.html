@@ -100,6 +100,28 @@
 
 {{ if $d.Summary }}{{ template "summary_panel" $d }}{{ end }}
 
+{{ if $d.Questions }}
+<div class="card mb-4">
+  <div class="card-body">
+    <h2 class="h5 card-title mb-1">Revised third-party answers</h2>
+    <p class="text-secondary small mb-3">
+      Once this questionnaire has gone back to the vendor with assessor feedback and come back with
+      updated answers, upload the revised file here. Matched answers that changed are updated and go
+      back to "not reviewed"; everything else &mdash; AI drafts, prior sign-offs, remarks &mdash; is
+      left as it is.
+      {{ if $d.Closed }}Applying any change reopens this assessment.{{ end }}
+    </p>
+    <form method="post" action="/assessments/{{ $a.ID }}/revisions/preview" enctype="multipart/form-data"
+          class="d-flex flex-wrap align-items-center gap-2">
+      <input type="hidden" name="csrf_token" value="{{ $d.CSRFToken }}">
+      <input class="form-control" style="max-width: 320px;" type="file" name="file" required
+             accept=".xlsx,.xlsm,.xltx,.csv,.tsv">
+      <button class="btn btn-outline-primary" type="submit">Preview changes</button>
+    </form>
+  </div>
+</div>
+{{ end }}
+
 {{ if not $d.Closed }}
 {{ template "rubric_panel" (dict "AssessmentID" $a.ID "Rubric" $d.Rubric) }}
 {{ end }}

@@ -27,6 +27,10 @@ type QuestionRepository interface {
 	ApplyDraft(ctx context.Context, questionID uuid.UUID, draft string) error
 	Finalize(ctx context.Context, questionID uuid.UUID, final string, userID *uuid.UUID, at time.Time) error
 	Unfinalize(ctx context.Context, questionID uuid.UUID) error
+	// ReviseAnswer replaces the vendor's answer after a re-upload of revised
+	// third-party responses. See the implementation for why it always resets
+	// review_status rather than following Unfinalize's conditional logic.
+	ReviseAnswer(ctx context.Context, questionID uuid.UUID, newAnswer string) error
 	DeleteByAssessment(ctx context.Context, assessmentID uuid.UUID) error
 }
 
@@ -327,6 +331,35 @@ func (r *questionRepository) Unfinalize(ctx context.Context, questionID uuid.UUI
 		       finalized_by = NULL
 		 WHERE id = $1`
 	tag, err := r.db.Querier(ctx).Exec(ctx, stmt, questionID)
+	if err != nil {
+		return helper.MapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return helper.ErrNotFound
+	}
+	return nil
+}
+
+// ReviseAnswer overwrites third_party_answer with a value obtained after the
+// questionnaire went back to the vendor and came back again, and unconditionally
+// resets the question to pending - unlike Unfinalize, which restores whichever
+// of pending/ai_drafted the old draft implies. A changed answer invalidates any
+// existing AI draft and any human sign-off equally, so there is no case here
+// where the previous review_status should be preserved.
+//
+// assessor_feedback_draft and assessor_feedback_final are deliberately left
+// untouched, for the same reason Finalize leaves the draft untouched: whatever
+// the AI said and whatever a human signed off on the old answer stay visible as
+// history next to the new one, rather than being silently discarded.
+func (r *questionRepository) ReviseAnswer(ctx context.Context, questionID uuid.UUID, newAnswer string) error {
+	const stmt = `
+		UPDATE questions
+		   SET third_party_answer = $2,
+		       review_status = 'pending',
+		       finalized_at = NULL,
+		       finalized_by = NULL
+		 WHERE id = $1`
+	tag, err := r.db.Querier(ctx).Exec(ctx, stmt, questionID, newAnswer)
 	if err != nil {
 		return helper.MapErr(err)
 	}

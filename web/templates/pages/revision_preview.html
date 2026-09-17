@@ -1,0 +1,104 @@
+{{ define "content" }}
+{{ $d := .Data }}
+{{ $a := $d.Assessment }}
+
+<div class="mb-4">
+  <h1 class="h3 mb-1">Revised third-party answers</h1>
+  <p class="text-secondary mb-0">
+    {{ $a.Title }} &middot; {{ $a.VendorName }}
+  </p>
+</div>
+
+{{ if $.Error }}
+<div class="card">
+  <div class="card-body">
+    <p class="text-danger mb-3">{{ $.Error }}</p>
+    <a class="btn btn-outline-secondary" href="/assessments/{{ $a.ID }}">Back to assessment</a>
+  </div>
+</div>
+{{ else }}
+{{ $p := $d.Preview }}
+
+{{ if $p.ChangedCount }}
+<form method="post" action="/assessments/{{ $a.ID }}/revisions/apply">
+  <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <h2 class="h5 card-title mb-1">
+        {{ $p.ChangedCount }} answer{{ if ne $p.ChangedCount 1 }}s{{ end }} changed
+      </h2>
+      <p class="text-secondary small mb-0">
+        Matched to existing questions by domain and question text. Uncheck any row you don't want
+        applied. Nothing else about a question changes &mdash; the AI's draft, any prior sign-off and
+        the other fields are left as they are &mdash; but an applied question goes back to
+        "not reviewed" so it gets looked at again.
+      </p>
+    </div>
+  </div>
+
+  {{ range $p.Rows }}
+  {{ if .Changed }}
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" name="apply_{{ .QuestionID }}"
+               id="apply-{{ .QuestionID }}" value="1" checked>
+        <label class="form-check-label fw-semibold" for="apply-{{ .QuestionID }}">
+          {{ .QuestionText }}
+        </label>
+      </div>
+      <p class="text-secondary small mb-2">{{ .DomainName }}</p>
+      <input type="hidden" name="answer_{{ .QuestionID }}" value="{{ .NewAnswer }}">
+      <div class="row g-3">
+        <div class="col-12 col-md-6">
+          <div class="small text-secondary mb-1">Previous answer</div>
+          <div class="small">{{ if .OldAnswer }}{{ .OldAnswer }}{{ else }}<em>blank</em>{{ end }}</div>
+        </div>
+        <div class="col-12 col-md-6">
+          <div class="small text-secondary mb-1">New answer</div>
+          <div class="small">{{ .NewAnswer }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{ end }}
+  {{ end }}
+
+  <div class="sticky-actions d-flex justify-content-end gap-2 p-3 mt-4">
+    <a class="btn btn-outline-secondary" href="/assessments/{{ $a.ID }}">Cancel</a>
+    <button class="btn btn-primary" type="submit">Apply changes</button>
+  </div>
+</form>
+{{ else }}
+<div class="card mb-4">
+  <div class="card-body">
+    <p class="text-secondary mb-3">
+      Every answer matched in that file is identical to what's already recorded here &mdash; there's
+      nothing to apply.
+    </p>
+    <a class="btn btn-outline-secondary" href="/assessments/{{ $a.ID }}">Back to assessment</a>
+  </div>
+</div>
+{{ end }}
+
+{{ if $p.Unmatched }}
+<div class="card">
+  <div class="card-body">
+    <h2 class="h6 card-title">Rows not matched to a question ({{ len $p.Unmatched }})</h2>
+    <p class="text-secondary small">
+      These rows in the uploaded file couldn't be confidently matched to an existing question here, so
+      nothing was changed for them. This usually means the question was reworded a lot, or the row
+      belongs to a question outside this assessment's current set.
+    </p>
+    <ul class="small mb-0">
+      {{ range $p.Unmatched }}
+      <li>{{ .QuestionText }}</li>
+      {{ end }}
+    </ul>
+  </div>
+</div>
+{{ end }}
+
+{{ end }}
+{{ end }}
